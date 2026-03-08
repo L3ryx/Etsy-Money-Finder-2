@@ -10,6 +10,15 @@
 <link href="https://fonts.googleapis.com/css2?family=Croissant+One&display=swap" rel="stylesheet">
 
 <link rel="stylesheet" href="style.css">
+<style>
+  #results { margin-top: 20px; }
+  .result-card { display: flex; justify-content: space-around; align-items: center; background: #fff; padding: 10px; margin-bottom: 10px; border-radius: 8px; }
+  .result-card img { max-width: 150px; max-height: 150px; object-fit: contain; border: 1px solid #ccc; border-radius: 4px; }
+  .info { text-align: center; }
+  .info a { text-decoration: none; color: #0077cc; font-weight: bold; }
+  .score { font-weight: bold; color: #d9534f; margin-top: 5px; }
+  #logs { background: #222; color: #0f0; padding: 10px; height: 150px; overflow-y: scroll; font-family: monospace; margin-top: 20px; }
+</style>
 </head>
 <body>
 
@@ -30,7 +39,7 @@
 
 <div class="form-container">
 
-<input type="text" class="input-field" placeholder="Keyword">
+<input type="file" class="input-field" id="images" multiple accept="image/*">
 
 <select class="dropdown">
 <option value="5">Analyse 5 annonces</option>
@@ -47,6 +56,9 @@
 <!-- ================= RESULTS (IMPORTANT : HORS CONTAINER) ================= -->
 <div id="results"></div>
 
+<!-- ================= LOGS ================= -->
+<div id="logs"></div>
+
 <!-- ================= LOADER ================= -->
 <div id="loader" class="loader hidden">
 <div class="spinner"></div>
@@ -54,75 +66,91 @@
 </div>
 
 <!-- ================= SCRIPT ================= -->
+<script src="/socket.io/socket.io.js"></script>
 <script>
-
 const startBtn = document.querySelector(".start-btn");
 const resultsContainer = document.getElementById("results");
 const loader = document.getElementById("loader");
+const logs = document.getElementById("logs");
+const imagesInput = document.getElementById("images");
+
+const socket = io();
+let socketId = null;
+
+socket.on('connected', data => {
+  socketId = data.socketId;
+  appendLog(`Connected with Socket ID: ${socketId}`);
+});
+
+socket.on('log', data => appendLog(data.message));
+
+function appendLog(message){
+  logs.innerHTML += `[${new Date().toLocaleTimeString()}] ${message}<br>`;
+  logs.scrollTop = logs.scrollHeight;
+}
 
 startBtn.addEventListener("click", async () => {
+  const files = imagesInput.files;
+  if(!files.length){
+    alert("⚠️ Sélectionne au moins une image !");
+    return;
+  }
 
-const keyword = document.querySelector(".input-field").value;
-const limit = document.querySelector(".dropdown").value;
+  const limit = document.querySelector(".dropdown").value;
 
-if(!keyword){
-alert("⚠️ Entre un keyword !");
-return;
-}
+  loader.classList.remove("hidden");
+  startBtn.disabled = true;
+  startBtn.innerText = "Loading...";
 
-loader.classList.remove("hidden");
-startBtn.disabled = true;
-startBtn.innerText = "Loading...";
+  const formData = new FormData();
+  for(const file of files) formData.append("images", file);
+  formData.append("socketId", socketId);
+  formData.append("limit", limit);
 
-try {
+  appendLog("Starting analysis...");
 
-const response = await fetch("/search-etsy", {
-method:"POST",
-headers:{
-"Content-Type":"application/json"
-},
-body:JSON.stringify({
-keyword,
-limit
-})
+  try{
+    const res = await fetch("/analyze-images", {
+      method: "POST",
+      body: formData
+    });
+
+    const data = await res.json();
+    resultsContainer.innerHTML = "";
+
+    if(data.results && data.results.length){
+      data.results.forEach(item => {
+        item.matches.forEach(match => {
+          const card = document.createElement("div");
+          card.className = "result-card";
+
+          card.innerHTML = `
+            <div class="info">
+              <img src="${item.etsy}" alt="Etsy Image">
+              <div><a href="${item.etsy}" target="_blank">Etsy Link</a></div>
+            </div>
+            <div class="info">
+              <img src="${match.image}" alt="AliExpress Image">
+              <div><a href="${match.link}" target="_blank">AliExpress Link</a></div>
+            </div>
+            <div class="info score">${match.similarity}% similarity</div>
+          `;
+          resultsContainer.appendChild(card);
+        });
+      });
+    } else {
+      resultsContainer.innerHTML = "<p>Aucun résultat trouvé.</p>";
+    }
+
+  } catch(err){
+    console.error(err);
+    alert("Erreur serveur ❌");
+  }
+
+  loader.classList.add("hidden");
+  startBtn.disabled = false;
+  startBtn.innerText = "START";
 });
-
-const data = await response.json();
-
-resultsContainer.innerHTML = "";
-
-if(data.results && data.results.length > 0){
-
-data.results.forEach(item => {
-
-const card = document.createElement("div");
-card.className = "result-card";
-
-card.innerHTML = `
-<img src="${item.image}">
-<br>
-<a href="${item.link}" target="_blank">Voir annonce</a>
-`;
-
-resultsContainer.appendChild(card);
-
-});
-
-} else {
-resultsContainer.innerHTML = "<p>Aucun résultat trouvé.</p>";
-}
-
-} catch(error){
-console.error(error);
-alert("Erreur serveur ❌");
-}
-
-loader.classList.add("hidden");
-startBtn.disabled = false;
-startBtn.innerText = "START";
-
-});
-
 </script>
 
 </body>
