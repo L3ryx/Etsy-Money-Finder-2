@@ -19,37 +19,31 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.static("public"));
 
 /* ===================================================== */
-/* SOCKET LOG SYSTEM */
+/* LOG SYSTEM */
 /* ===================================================== */
 function sendLog(socket, message) {
   console.log(message);
   if (socket) {
-    socket.emit("log", {
-      message,
-      time: new Date().toISOString()
-    });
+    socket.emit("log", { message, time: new Date().toISOString() });
   }
 }
 
 /* ===================================================== */
-/* 🔎 ETSY SEARCH (IMAGE + LINK) */
+/* 🔎 ETSY SEARCH (IMAGE + LINK) via ScraperAPI */
 /* ===================================================== */
 app.post("/search-etsy", async (req, res) => {
   const { keyword, limit } = req.body;
   if (!keyword) return res.status(400).json({ error: "Keyword required" });
-
   const maxItems = Math.min(parseInt(limit) || 10, 50);
+
   try {
     const etsyUrl = `https://www.etsy.com/search?q=${encodeURIComponent(keyword)}`;
     const scraperRes = await axios.get("https://api.scraperapi.com/", {
-      params: {
-        api_key: process.env.SCRAPAPI_KEY,
-        url: etsyUrl,
-        render: true
-      }
+      params: { api_key: process.env.SCRAPERAPI_KEY, url: etsyUrl, render: true }
     });
 
     const html = scraperRes.data;
+
     const imageRegex = /https:\/\/i\.etsystatic\.com[^"]+/g;
     const linkRegex = /https:\/\/www\.etsy\.com\/listing\/\d+/g;
 
@@ -62,6 +56,7 @@ app.post("/search-etsy", async (req, res) => {
     }
 
     res.json({ results });
+
   } catch (err) {
     console.error("ScraperAPI Error:", err.message);
     res.status(500).json({ error: "Scraping failed" });
@@ -69,18 +64,19 @@ app.post("/search-etsy", async (req, res) => {
 });
 
 /* ===================================================== */
-/* 🖼 REVERSE IMAGE + ALIEXPRESS + OPENAI SIMILARITY */
+/* 🔄 IMAGE ANALYSIS PIPELINE (IMGBB + Reverse Image + AliExpress + OpenAI) */
 /* ===================================================== */
 app.post("/analyze-images", upload.array("images"), async (req, res) => {
   const socketId = req.body.socketId;
   const socket = io.sockets.sockets.get(socketId);
-  const finalResults = [];
+
+  const results = [];
 
   for (const file of req.files) {
     sendLog(socket, `Processing ${file.originalname}`);
     const base64 = file.buffer.toString("base64");
 
-    /* UPLOAD TO IMGBB */
+    // Upload sur IMGBB
     let etsyImageUrl;
     try {
       const uploadRes = await axios.post(
@@ -94,19 +90,34 @@ app.post("/analyze-images", upload.array("images"), async (req, res) => {
       continue;
     }
 
-    /* REVERSE IMAGE GOOGLE + FILTER ALIEXPRESS */
-    // Ici, tu devrais remplacer par ton API de reverse image (ex: Google Custom Search)
-    // Pour l’exemple, on simule 5 résultats AliExpress
-    const aliResults = [
-      { link: "https://www.aliexpress.com/item/1", image: etsyImageUrl },
-      { link: "https://www.aliexpress.com/item/2", image: etsyImageUrl },
-      { link: "https://www.aliexpress.com/item/3", image: etsyImageUrl },
-      { link: "https://www.aliexpress.com/item/4", image: etsyImageUrl },
-      { link: "https://www.aliexpress.com/item/5", image: etsyImageUrl }
-    ];
+    // Reverse image ScraperAPI + AliExpress
+    let aliResults = [];
+    try {
+      const reverseRes = await axios.get("https://api.scraperapi.com/", {
+        params: {
+          api_key: process.env.SCRAPERAPI_KEY,
+          url: `https://www.google.com/searchbyimage?image_url=${encodeURIComponent(etsyImageUrl)}`,
+          render: true
+        }
+      });
 
-    /* COMPARAISON OPENAI POUR CHAQUE ALIEXPRESS IMAGE */
-    const matches = [];
+      const html = reverseRes.data;
+      const aliImageRegex = /https:\/\/[^"]*\.alicdn\.com\/[^"]+/g;
+      const aliLinkRegex = /https:\/\/www\.aliexpress\.com\/item\/\d+/g;
+
+      const aliImages = [...html.matchAll(aliImageRegex)].map(m => m[0]).slice(0, 5);
+      const aliLinks = [...html.matchAll(aliLinkRegex)].map(m => m[0]).slice(0, 5);
+
+      aliResults = aliImages.map((img, i) => ({ image: img, link: aliLinks[i] }));
+
+      sendLog(socket, `Found ${aliResults.length} AliExpress candidates`);
+
+    } catch (err) {
+      sendLog(socket, "Reverse image ScraperAPI failed");
+    }
+
+    // OpenAI comparaison
+    let bestMatch = null;
     for (const ali of aliResults) {
       try {
         const vision = await axios.post(
@@ -128,32 +139,32 @@ app.post("/analyze-images", upload.array("images"), async (req, res) => {
         );
 
         const text = vision.data.choices[0].message.content;
-        const matchScore = text.match(/\d+/);
-        const similarity = matchScore ? parseInt(matchScore[0]) : 0;
+        const match = text.match(/\d+/);
+        const similarity = match ? parseInt(match[0]) : 0;
+
+        sendLog(socket, `AI Similarity: ${similarity}%`);
 
         if (similarity >= 70) {
-          matches.push({
-            etsy: { image: etsyImageUrl, link: file.originalname },
-            aliexpress: ali,
-            similarity
-          });
-          sendLog(socket, `Match found: ${similarity}%`);
+          bestMatch = { etsy: etsyImageUrl, aliexpress: ali, similarity };
+          sendLog(socket, "Match ≥70%, stopping comparisons for this image");
+          break;
         }
+
       } catch {
-        sendLog(socket, "OpenAI comparison failed");
+        sendLog(socket, "OpenAI Vision failed for this comparison");
       }
     }
 
-    if (matches.length > 0) finalResults.push(...matches);
+    if (bestMatch) results.push(bestMatch);
   }
 
-  res.json({ results: finalResults });
+  res.json({ results });
 });
 
 /* ===================================================== */
 /* SOCKET CONNECTION */
 /* ===================================================== */
-io.on("connection", (socket) => {
+io.on("connection", socket => {
   socket.emit("connected", { socketId: socket.id });
   console.log("🟢 Client connected");
 });
