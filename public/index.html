@@ -3,22 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
 <title>Niche Finder</title>
 
 <!-- 🔥 POLICE -->
 <link href="https://fonts.googleapis.com/css2?family=Croissant+One&display=swap" rel="stylesheet">
 
 <link rel="stylesheet" href="style.css">
-<style>
-  #results { margin-top: 20px; }
-  .result-card { display: flex; justify-content: space-around; align-items: center; background: #fff; padding: 10px; margin-bottom: 10px; border-radius: 8px; }
-  .result-card img { max-width: 150px; max-height: 150px; object-fit: contain; border: 1px solid #ccc; border-radius: 4px; }
-  .info { text-align: center; }
-  .info a { text-decoration: none; color: #0077cc; font-weight: bold; }
-  .score { font-weight: bold; color: #d9534f; margin-top: 5px; }
-  #logs { background: #222; color: #0f0; padding: 10px; height: 150px; overflow-y: scroll; font-family: monospace; margin-top: 20px; }
-</style>
 </head>
 <body>
 
@@ -34,124 +24,34 @@
 
 <!-- ================= MAIN FORM ================= -->
 <div class="container">
-
-<h1 class="title">Niche Finder</h1>
-
-<div class="form-container">
-
-<input type="file" class="input-field" id="images" multiple accept="image/*">
-
-<select class="dropdown">
-<option value="5">Analyse 5 annonces</option>
-<option value="10">Analyse 10 annonces</option>
-<option value="20">Analyse 20 annonces</option>
-<option value="50">Analyse 50 annonces</option>
-</select>
-
-<button class="start-btn">START</button>
-
-</div>
+  <h1 class="title">Niche Finder</h1>
+  <div class="form-container">
+    <input type="text" id="keyword" class="input-field" placeholder="Keyword">
+    <select id="limit" class="dropdown">
+      <option value="5">Analyse 5 annonces</option>
+      <option value="10">Analyse 10 annonces</option>
+      <option value="20">Analyse 20 annonces</option>
+      <option value="50">Analyse 50 annonces</option>
+    </select>
+    <button class="start-btn" onclick="searchEtsy()">START</button>
+  </div>
 </div>
 
-<!-- ================= RESULTS (IMPORTANT : HORS CONTAINER) ================= -->
+<!-- ================= RESULTS ================= -->
 <div id="results"></div>
-
-<!-- ================= LOGS ================= -->
-<div id="logs"></div>
 
 <!-- ================= LOADER ================= -->
 <div id="loader" class="loader hidden">
-<div class="spinner"></div>
-<p>Recherche en cours...</p>
+  <div class="spinner"></div>
+  <p>Recherche en cours...</p>
 </div>
+
+<!-- ================= MATRIX CANVAS ================= -->
+<canvas id="matrix"></canvas>
 
 <!-- ================= SCRIPT ================= -->
 <script src="/socket.io/socket.io.js"></script>
-<script>
-const startBtn = document.querySelector(".start-btn");
-const resultsContainer = document.getElementById("results");
-const loader = document.getElementById("loader");
-const logs = document.getElementById("logs");
-const imagesInput = document.getElementById("images");
-
-const socket = io();
-let socketId = null;
-
-socket.on('connected', data => {
-  socketId = data.socketId;
-  appendLog(`Connected with Socket ID: ${socketId}`);
-});
-
-socket.on('log', data => appendLog(data.message));
-
-function appendLog(message){
-  logs.innerHTML += `[${new Date().toLocaleTimeString()}] ${message}<br>`;
-  logs.scrollTop = logs.scrollHeight;
-}
-
-startBtn.addEventListener("click", async () => {
-  const files = imagesInput.files;
-  if(!files.length){
-    alert("⚠️ Sélectionne au moins une image !");
-    return;
-  }
-
-  const limit = document.querySelector(".dropdown").value;
-
-  loader.classList.remove("hidden");
-  startBtn.disabled = true;
-  startBtn.innerText = "Loading...";
-
-  const formData = new FormData();
-  for(const file of files) formData.append("images", file);
-  formData.append("socketId", socketId);
-  formData.append("limit", limit);
-
-  appendLog("Starting analysis...");
-
-  try{
-    const res = await fetch("/analyze-images", {
-      method: "POST",
-      body: formData
-    });
-
-    const data = await res.json();
-    resultsContainer.innerHTML = "";
-
-    if(data.results && data.results.length){
-      data.results.forEach(item => {
-        item.matches.forEach(match => {
-          const card = document.createElement("div");
-          card.className = "result-card";
-
-          card.innerHTML = `
-            <div class="info">
-              <img src="${item.etsy}" alt="Etsy Image">
-              <div><a href="${item.etsy}" target="_blank">Etsy Link</a></div>
-            </div>
-            <div class="info">
-              <img src="${match.image}" alt="AliExpress Image">
-              <div><a href="${match.link}" target="_blank">AliExpress Link</a></div>
-            </div>
-            <div class="info score">${match.similarity}% similarity</div>
-          `;
-          resultsContainer.appendChild(card);
-        });
-      });
-    } else {
-      resultsContainer.innerHTML = "<p>Aucun résultat trouvé.</p>";
-    }
-
-  } catch(err){
-    console.error(err);
-    alert("Erreur serveur ❌");
-  }
-
-  loader.classList.add("hidden");
-  startBtn.disabled = false;
-  startBtn.innerText = "START";
-});
-</script>
+<script src="script.js"></script>
 
 </body>
 </html>
