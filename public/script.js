@@ -6,17 +6,17 @@ socket.on("connected", data => {
 
 socketId = data.socketId
 
-log("Connected to server")
+addLog("Connected to server")
 
 })
 
 socket.on("log", data => {
 
-log(data.message)
+addLog(data.message)
 
 })
 
-function log(message){
+function addLog(message){
 
 const logs = document.getElementById("logs")
 
@@ -30,7 +30,51 @@ logs.scrollTop = logs.scrollHeight
 
 }
 
-async function startSearch(){
+/* ============================= */
+/* ETSY SEARCH */
+/* ============================= */
+
+async function searchEtsy(){
+
+const keyword = document.getElementById("keyword").value
+const limit = document.getElementById("limit").value
+
+if(!keyword){
+
+alert("Enter keyword")
+
+return
+
+}
+
+addLog("Searching Etsy...")
+
+const response = await fetch("/search-etsy",{
+
+method:"POST",
+
+headers:{
+"Content-Type":"application/json"
+},
+
+body:JSON.stringify({
+keyword,
+limit
+})
+
+})
+
+const data = await response.json()
+
+displayResults(data.results)
+
+}
+
+/* ============================= */
+/* IMAGE ANALYSIS */
+/* ============================= */
+
+async function analyzeImages(){
 
 const files = document.getElementById("images").files
 
@@ -46,17 +90,20 @@ const formData = new FormData()
 
 for(const file of files){
 
-formData.append("images", file)
+formData.append("images",file)
 
 }
 
-formData.append("socketId", socketId)
+formData.append("socketId",socketId)
 
-log("Uploading images...")
+addLog("Uploading images...")
 
-const response = await fetch("/analyze",{
+const response = await fetch("/analyze-images",{
+
 method:"POST",
+
 body:formData
+
 })
 
 const data = await response.json()
@@ -64,6 +111,10 @@ const data = await response.json()
 displayResults(data.results)
 
 }
+
+/* ============================= */
+/* DISPLAY RESULTS */
+/* ============================= */
 
 function displayResults(results){
 
@@ -79,28 +130,29 @@ div.className="result"
 
 let html = `<strong>${item.image}</strong><br>`
 
-if(!item.matches.length){
+if(item.link){
 
-html += "No AliExpress matches found"
+html += `<a href="${item.link}" target="_blank">View Listing</a><br>`
+html += `<img src="${item.image}"><br>`
 
-}else{
+}
+
+if(item.matches){
 
 item.matches.forEach(m =>{
 
-html += `
-<a href="${m.url}" target="_blank">
-${m.url}
-</a>
+html+=`
+<br>
+<a href="${m.url}" target="_blank">${m.url}</a>
 <br>
 Similarity: ${m.similarity}%
-<br><br>
 `
 
 })
 
 }
 
-div.innerHTML = html
+div.innerHTML=html
 
 container.appendChild(div)
 
