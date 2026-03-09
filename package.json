@@ -1,17 +1,16 @@
 {
-  "name": "etsy-aliexpress-finder",
+  "name": "image-reverse-search-ai",
   "version": "1.0.0",
-  "description": "Find AliExpress products from Etsy images using reverse image search with Serper API",
+  "description": "AI reverse image search for AliExpress",
   "main": "server.js",
-  "type": "module",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "axios": "^1.7.0",
-    "dotenv": "^16.4.0",
-    "express": "^4.18.2",
+    "axios": "^1.7.7",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1",
     "multer": "^1.4.5-lts.1",
-    "socket.io": "^4.7.0"
+    "socket.io": "^4.7.5"
   }
 }
