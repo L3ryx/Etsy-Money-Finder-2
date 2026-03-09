@@ -1,104 +1,50 @@
-const socket = io()
+const socket = io();
+const resultsContainer = document.getElementById("results");
 
-let socketId = null
+document.getElementById("searchBtn").addEventListener("click", async () => {
+  const keyword = document.getElementById("keyword").value;
+  if (!keyword) return alert("Enter a keyword");
 
-socket.on("connected",data=>{
-socketId=data.socketId
-log("Connected to server")
-})
+  resultsContainer.innerHTML = "Searching...";
 
-socket.on("log",data=>{
-log(data.message)
-})
+  const res = await fetch("/analyze-etsy", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ keyword }),
+  });
 
-function log(message){
+  const data = await res.json();
 
-const logs=document.getElementById("logs")
+  if (!data.results || data.results.length === 0) {
+    resultsContainer.innerHTML = "No results with similarity ≥ 70%.";
+    return;
+  }
 
-const line=document.createElement("div")
-line.textContent=message
+  resultsContainer.innerHTML = "";
 
-logs.appendChild(line)
+  data.results.forEach(item => {
+    const etsyDiv = document.createElement("div");
+    etsyDiv.className = "etsy-item";
 
-logs.scrollTop=logs.scrollHeight
+    etsyDiv.innerHTML = `
+      <h3>Etsy Product</h3>
+      <a href="${item.etsyLink}" target="_blank">
+        <img src="${item.etsyImage}" width="150"/>
+      </a>
+    `;
 
-}
+    item.matches.forEach(match => {
+      const aliDiv = document.createElement("div");
+      aliDiv.className = "ali-item";
+      aliDiv.innerHTML = `
+        <p>Similarity: ${match.similarity}%</p>
+        <a href="${match.aliexpressLink}" target="_blank">
+          <img src="${match.aliexpressImage}" width="150"/>
+        </a>
+      `;
+      etsyDiv.appendChild(aliDiv);
+    });
 
-/* ======================= */
-/* SEARCH */
-/* ======================= */
-
-async function search(){
-
-const keyword=document.getElementById("keyword").value
-const limit=document.getElementById("limit").value || 10
-
-if(!keyword){
-
-alert("Enter keyword")
-
-return
-
-}
-
-log("Starting search...")
-
-const response = await fetch("/search-etsy",{
-
-method:"POST",
-
-headers:{
-"Content-Type":"application/json"
-},
-
-body:JSON.stringify({
-keyword,
-limit,
-socketId
-})
-
-})
-
-const data = await response.json()
-
-displayResults(data.results)
-
-}
-
-/* ======================= */
-/* DISPLAY */
-/* ======================= */
-
-function displayResults(results){
-
-const container=document.getElementById("results")
-
-container.innerHTML=""
-
-results.forEach(r=>{
-
-const div=document.createElement("div")
-
-div.className="result"
-
-div.innerHTML=`
-
-<h3>Match Found (${r.similarity}%)</h3>
-
-Etsy Product<br>
-<img src="${r.etsyImage}"><br>
-<a href="${r.etsyLink}" target="_blank">View Etsy</a>
-
-<br><br>
-
-AliExpress Product<br>
-<img src="${r.aliImage}"><br>
-<a href="${r.aliLink}" target="_blank">View AliExpress</a>
-
-`
-
-container.appendChild(div)
-
-})
-
-}
+    resultsContainer.appendChild(etsyDiv);
+  });
+});
