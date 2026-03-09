@@ -220,6 +220,68 @@ app.post("/reverse-image", async (req, res) => {
   res.json({ results });
 });
 
+    /* ===================================================== */
+    /* OPENAI VISION ANALYSIS */
+    /* ===================================================== */
+
+    try {
+
+      const vision = await axios.post(
+        "https://api.openai.com/v1/chat/completions",
+        {
+          model: "gpt-4o-mini",
+          messages: [
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text: "Return similarity score between 0 and 100."
+                },
+                {
+                  type: "image_url",
+                  image_url: {
+                    url: imageUrl
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+            "Content-Type": "application/json"
+          }
+        }
+      );
+
+      const text = vision.data.choices[0].message.content;
+      const match = text.match(/\d+/);
+      const similarity = match ? parseInt(match[0]) : 0;
+
+      sendLog(socket, `AI Similarity: ${similarity}%`);
+
+      results.push({
+        image: file.originalname,
+        matches: [
+          {
+            url: "AI_ANALYSIS",
+            similarity
+          }
+        ]
+      });
+
+    } catch (err) {
+
+      sendLog(socket, "OpenAI Vision failed");
+    }
+  }
+
+  res.json({ results });
+
+});
+
 /*
 ====================================================
 SOCKET
