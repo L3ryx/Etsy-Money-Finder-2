@@ -1,10 +1,10 @@
 // server.js
-import "dotenv/config";
-import express from "express";
-import multer from "multer";
-import axios from "axios";
-import http from "http";
-import { Server } from "socket.io";
+require("dotenv").config();
+const express = require("express");
+const multer = require("multer");
+const axios = require("axios");
+const http = require("http");
+const { Server } = require("socket.io");
 
 const app = express();
 const server = http.createServer(app);
