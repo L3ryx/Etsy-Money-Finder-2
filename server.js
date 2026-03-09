@@ -1,11 +1,8 @@
-// server.js
-import dotenv from "dotenv";
-dotenv.config();
-
-import express from "express";
-import axios from "axios";
-import http from "http";
-import { Server } from "socket.io";
+require("dotenv").config();
+const express = require("express");
+const axios = require("axios");
+const http = require("http");
+const { Server } = require("socket.io");
 
 const app = express();
 const server = http.createServer(app);
