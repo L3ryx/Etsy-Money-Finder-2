@@ -4,47 +4,12 @@
 <meta charset="UTF-8">
 <title>Etsy → AliExpress Finder</title>
 <style>
-body {
-  font-family: Arial, sans-serif;
-  background: #0f172a;
-  color: white;
-  text-align: center;
-  padding: 20px;
-}
-input, button {
-  padding: 10px;
-  margin: 5px;
-  border-radius: 4px;
-  border: none;
-}
-button {
-  background: #22c55e;
-  color: white;
-  cursor: pointer;
-}
-.result-card {
-  background: #1e293b;
-  margin: 20px auto;
-  padding: 15px;
-  border-radius: 10px;
-  max-width: 800px;
-  display: flex;
-  align-items: center;
-  gap: 20px;
-  justify-content: space-between;
-}
-.result-card img {
-  width: 120px;
-  border-radius: 6px;
-}
-#logs {
-  background: black;
-  padding: 10px;
-  margin-top: 20px;
-  height: 150px;
-  overflow-y: auto;
-  text-align: left;
-}
+body { font-family: Arial,sans-serif; background:#0f172a; color:white; text-align:center; padding:20px; }
+input,button { padding:10px;margin:5px;border-radius:4px;border:none; }
+button { background:#22c55e;color:white; cursor:pointer; }
+.result-card { background:#1e293b; margin:20px auto; padding:15px; border-radius:10px; max-width:800px; display:flex; gap:20px; justify-content:space-between; }
+.result-card img { width:120px; border-radius:6px; }
+#logs { background:black; padding:10px; margin-top:20px; height:150px; overflow-y:auto; text-align:left; }
 </style>
 </head>
 <body>
@@ -62,79 +27,7 @@ button {
 <div id="results"></div>
 
 <script src="/socket.io/socket.io.js"></script>
-<script>
-const socket = io();
-let socketId = null;
-
-const logsDiv = document.getElementById("logs");
-const resultsDiv = document.getElementById("results");
-const searchBtn = document.getElementById("searchBtn");
-
-socket.on("connected", (data) => {
-    socketId = data.socketId;
-    addLog(`🟢 Connected with socketId: ${socketId}`);
-});
-
-socket.on("log", (data) => addLog(data.message));
-
-function addLog(message) {
-    const time = new Date().toLocaleTimeString();
-    logsDiv.innerHTML += `[${time}] ${message}<br>`;
-    logsDiv.scrollTop = logsDiv.scrollHeight;
-}
-
-searchBtn.addEventListener("click", async () => {
-    const keyword = document.getElementById("keyword").value.trim();
-    const limit = document.getElementById("limit").value || 10;
-
-    if (!keyword) {
-        addLog("❌ Please enter a keyword");
-        return;
-    }
-
-    addLog(`🔎 Searching Etsy for "${keyword}"...`);
-    resultsDiv.innerHTML = "";
-
-    try {
-        // 1️⃣ Appel à ton serveur
-        const etsyRes = await fetch("/search-etsy", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ keyword, limit })
-        });
-
-        const etsyData = await etsyRes.json();
-
-        if (!etsyData.results || etsyData.results.length === 0) {
-            addLog("⚠️ No Etsy results found");
-            return;
-        }
-
-        addLog(`✅ Found ${etsyData.results.length} Etsy items`);
-
-        // Affiche juste les images Etsy pour test
-        etsyData.results.forEach(item => {
-            const card = document.createElement("div");
-            card.className = "result-card";
-            card.innerHTML = `
-                <div>
-                    <a href="${item.link}" target="_blank">
-                        <img src="${item.image}" alt="Etsy Image">
-                    </a>
-                </div>
-                <div>
-                    <p>Waiting for analysis...</p>
-                </div>
-            `;
-            resultsDiv.appendChild(card);
-        });
-
-    } catch (err) {
-        console.error(err);
-        addLog("❌ Error during search");
-    }
-});
-</script>
+<script src="script.js"></script>
 
 </body>
 </html>
