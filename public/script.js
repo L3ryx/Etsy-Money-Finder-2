@@ -1,38 +1,28 @@
-// Connexion Socket.io
+// script.js
 const socket = io();
-
-// Stocke le socketId envoyé par le serveur
 let socketId = null;
 
 socket.on("connected", (data) => {
   socketId = data.socketId;
-  appendLog(`🟢 Connected with socketId: ${socketId}`);
+  console.log("Connected with socketId:", socketId);
 });
 
-// Fonction pour ajouter des logs
-function appendLog(message, type = "info") {
-  const logsDiv = document.getElementById("logs");
-  const time = new Date().toLocaleTimeString();
-  const logEl = document.createElement("div");
-  logEl.textContent = `[${time}] ${message}`;
-  if (type === "error") logEl.style.color = "red";
-  logsDiv.appendChild(logEl);
-  logsDiv.scrollTop = logsDiv.scrollHeight;
-}
-
-// Écoute les logs du serveur
 socket.on("log", (data) => {
-  appendLog(data.message, data.type);
+  const logsDiv = document.getElementById("logs");
+  const p = document.createElement("p");
+  p.textContent = `[${data.type}] ${data.message}`;
+  logsDiv.appendChild(p);
+  logsDiv.scrollTop = logsDiv.scrollHeight;
 });
 
-// Rechercher sur Etsy
 async function search() {
-  const keyword = document.getElementById("keyword").value.trim();
-  const limit = document.getElementById("limit").value || 10;
+  const keyword = document.getElementById("keyword").value;
+  const limit = document.getElementById("limit").value;
 
-  if (!keyword) return alert("Enter a keyword");
+  if (!keyword) return alert("Please enter a keyword");
 
-  appendLog(`🔍 Searching Etsy for "${keyword}"`);
+  const resultsDiv = document.getElementById("results");
+  resultsDiv.innerHTML = "<p>Loading...</p>";
 
   try {
     const res = await fetch("/search-etsy", {
@@ -42,74 +32,89 @@ async function search() {
     });
 
     const data = await res.json();
-    displayEtsyResults(data.results);
+    resultsDiv.innerHTML = "";
+
+    for (const item of data.results) {
+      // créer un conteneur pour chaque résultat
+      const container = document.createElement("div");
+      container.className = "result";
+
+      const etsyImg = document.createElement("img");
+      etsyImg.src = item.image;
+      container.appendChild(etsyImg);
+
+      const etsyLink = document.createElement("a");
+      etsyLink.href = item.link;
+      etsyLink.target = "_blank";
+      etsyLink.textContent = "View on Etsy";
+      container.appendChild(etsyLink);
+
+      // bouton pour analyser l'image
+      const analyzeBtn = document.createElement("button");
+      analyzeBtn.textContent = "Find AliExpress";
+      analyzeBtn.onclick = () => analyzeImage(item.image, container);
+      container.appendChild(analyzeBtn);
+
+      resultsDiv.appendChild(container);
+    }
   } catch (err) {
-    appendLog(`❌ Etsy search error: ${err.message}`, "error");
+    console.error(err);
+    resultsDiv.innerHTML = "<p>Error fetching Etsy results</p>";
   }
 }
 
-// Affiche les résultats Etsy
-function displayEtsyResults(results) {
-  const resultsDiv = document.getElementById("results");
-  resultsDiv.innerHTML = "";
-
-  results.forEach(item => {
-    const el = document.createElement("div");
-    el.className = "result";
-
-    el.innerHTML = `
-      <img src="${item.image}" alt="Etsy Image">
-      <p><a href="${item.link}" target="_blank">${item.link}</a></p>
-    `;
-
-    resultsDiv.appendChild(el);
-  });
-}
-
-// Upload et analyse images
-async function analyzeImages() {
-  const input = document.getElementById("imageFiles");
-  if (!input.files.length) return alert("Select images first");
-
-  const formData = new FormData();
-  for (const file of input.files) formData.append("images", file);
-  formData.append("socketId", socketId);
-
-  appendLog("🧠 Sending images for analysis...");
+async function analyzeImage(imageUrl, container) {
+  const resultsDiv = document.createElement("div");
+  resultsDiv.innerHTML = "<p>Finding AliExpress matches...</p>";
+  container.appendChild(resultsDiv);
 
   try {
-    const res = await fetch("/analyze-images", { method: "POST", body: formData });
-    const data = await res.json();
-    displayAnalysisResults(data.results);
-  } catch (err) {
-    appendLog(`❌ Image analysis error: ${err.message}`, "error");
-  }
-}
+    // fetch image as blob to send to /analyze-images
+    const imgRes = await fetch(imageUrl);
+    const blob = await imgRes.blob();
+    const file = new File([blob], "etsy.jpg", { type: "image/jpeg" });
 
-// Affiche les résultats de l'analyse
-function displayAnalysisResults(results) {
-  const resultsDiv = document.getElementById("results");
-  resultsDiv.innerHTML = "";
+    const formData = new FormData();
+    formData.append("socketId", socketId);
+    formData.append("images", file);
 
-  results.forEach(item => {
-    const el = document.createElement("div");
-    el.className = "result";
-
-    let html = `<h3>${item.image}</h3>`;
-    item.matches.forEach(match => {
-      html += `
-        <p>
-          <a href="${match.url}" target="_blank">${match.url}</a>
-          — Similarity: ${(match.similarity * 100).toFixed(1)}%
-        </p>
-      `;
+    const res = await fetch("/analyze-images", {
+      method: "POST",
+      body: formData
     });
 
-    el.innerHTML = html;
-    resultsDiv.appendChild(el);
-  });
-}
+    const data = await res.json();
+    resultsDiv.innerHTML = "";
 
-// Connect les boutons
-document.getElementById("searchBtn").addEventListener("click", search);
-document.getElementById("analyzeBtn").addEventListener("click", analyzeImages);
+    const itemResults = data.results[0]?.matches || [];
+
+    if (!itemResults.length) {
+      resultsDiv.innerHTML = "<p>No matches found</p>";
+      return;
+    }
+
+    for (const match of itemResults) {
+      const matchDiv = document.createElement("div");
+      matchDiv.style.display = "flex";
+      matchDiv.style.alignItems = "center";
+      matchDiv.style.marginTop = "10px";
+
+      const img = document.createElement("img");
+      img.src = match.image;
+      img.style.width = "100px";
+      img.style.marginRight = "10px";
+
+      const link = document.createElement("a");
+      link.href = match.url;
+      link.target = "_blank";
+      link.textContent = `AliExpress - similarity: ${match.similarity}`;
+
+      matchDiv.appendChild(img);
+      matchDiv.appendChild(link);
+      resultsDiv.appendChild(matchDiv);
+    }
+  } catch (err) {
+    console.error(err);
+    resultsDiv.innerHTML = "<p>Error finding AliExpress matches</p>";
+  }
+}
