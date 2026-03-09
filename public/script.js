@@ -1,64 +1,68 @@
 const socket = io();
 
+const startBtn = document.getElementById("startBtn");
 const loader = document.getElementById("loader");
 const resultsContainer = document.getElementById("results");
-const startBtn = document.getElementById("startBtn");
 
 startBtn.addEventListener("click", async () => {
   const keyword = document.getElementById("keyword").value;
   const limit = document.getElementById("limit").value;
-  const files = document.getElementById("images").files;
 
-  if (!keyword && files.length === 0) return alert("⚠️ Entrez un keyword ou une image");
+  if (!keyword) return alert("⚠️ Entre un keyword !");
 
-  showLoader();
+  loader.classList.remove("hidden");
   startBtn.disabled = true;
+  startBtn.innerText = "Loading...";
 
-  let etsyResults = [];
-  if (keyword) {
-    const res = await fetch("/search-etsy", {
+  try {
+    const response = await fetch("/search-etsy", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ keyword, limit })
     });
-    const data = await res.json();
-    etsyResults = data.results || [];
+
+    const data = await response.json();
+    displayResults(data.results);
+
+  } catch (err) {
+    console.error(err);
+    alert("Erreur serveur ❌");
   }
 
-  let aliResults = [];
-  if (files.length > 0) {
-    const formData = new FormData();
-    for (const file of files) formData.append("images", file);
-    formData.append("socketId", socket.id);
-
-    const res = await fetch("/analyze-images", { method: "POST", body: formData });
-    const data = await res.json();
-    aliResults = data.results || [];
-  }
-
-  resultsContainer.innerHTML = "";
-
-  // Affiche résultats Etsy
-  etsyResults.forEach(item => {
-    const card = document.createElement("div");
-    card.className = "result-card";
-    card.innerHTML = `<img src="${item.image}"><br><a href="${item.link}" target="_blank">Voir annonce Etsy</a>`;
-    resultsContainer.appendChild(card);
-  });
-
-  // Affiche résultats AliExpress
-  aliResults.forEach(item => {
-    item.aliResults.forEach(a => {
-      const card = document.createElement("div");
-      card.className = "result-card";
-      card.innerHTML = `<img src="${a.image}"><br><a href="${a.link}" target="_blank">Voir annonce AliExpress</a>`;
-      resultsContainer.appendChild(card);
-    });
-  });
-
-  hideLoader();
+  loader.classList.add("hidden");
   startBtn.disabled = false;
+  startBtn.innerText = "START";
 });
 
-function showLoader() { loader.classList.remove("hidden"); }
-function hideLoader() { loader.classList.add("hidden"); }
+function displayResults(results) {
+  resultsContainer.innerHTML = "";
+
+  if (!results || results.length === 0) {
+    resultsContainer.innerHTML = "<p>Aucun résultat trouvé.</p>";
+    return;
+  }
+
+  results.forEach(item => {
+    const card = document.createElement("div");
+    card.className = "result-card";
+
+    // Etsy Image + Link
+    let html = `<div class="etsy">
+                  <img src="${item.etsy.image}" />
+                  <a href="${item.etsy.link}" target="_blank">Etsy Listing</a>
+                </div>`;
+
+    // AliExpress images + links
+    html += `<div class="aliexpress-container">`;
+    item.aliexpress.forEach(a => {
+      html += `<div class="aliexpress-card">
+                 <img src="${a.image}" />
+                 <a href="${a.link}" target="_blank">AliExpress</a>
+               </div>`;
+    });
+    html += `</div>`;
+
+    card.innerHTML = html;
+    resultsContainer.appendChild(card);
+  });
+}
