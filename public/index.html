@@ -2,19 +2,22 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Etsy → AliExpress Image Finder</title>
-  <link rel="stylesheet" href="style.css">
+  <title>Etsy → AliExpress Finder</title>
+  <style>
+    body { font-family: sans-serif; max-width: 900px; margin: 2rem auto; }
+    input { padding: 0.5rem; width: 300px; }
+    button { padding: 0.5rem 1rem; }
+    .result { display: flex; gap: 1rem; margin-bottom: 2rem; align-items: center; }
+    img { width: 150px; height: auto; border: 1px solid #ccc; }
+  </style>
 </head>
 <body>
-  <h1>Etsy → AliExpress Image Finder</h1>
-
-  <input type="text" id="keyword" placeholder="Enter keyword..." />
+  <h1>Etsy → AliExpress Finder</h1>
+  <input type="text" id="keyword" placeholder="Enter Etsy keyword">
   <button id="searchBtn">Search</button>
-
+  <p id="status"></p>
   <div id="results"></div>
 
-  <script src="/socket.io/socket.io.js"></script>
-  <script src="script.js"></script>
+  <script src="/script.js"></script>
 </body>
 </html>
