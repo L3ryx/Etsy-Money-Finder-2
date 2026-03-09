@@ -12,113 +12,93 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static("public"));
 
-// ===========================================
-// SOCKET.IO
-// ===========================================
+// TEST SOCKET
 io.on("connection", (socket) => {
   console.log("🟢 Client connected");
-  socket.emit("connected", { socketId: socket.id });
 });
 
-// ===========================================
-// REVERSE IMAGE SEARCH
-// ===========================================
-async function searchAliExpressImages(imageUrl, limit = 5) {
+// ROUTE : récupérer Etsy images via mot-clé
+app.post("/search-etsy", async (req, res) => {
+  const { keyword, limit } = req.body;
+  const maxItems = Math.min(parseInt(limit) || 5, 5);
+
   try {
-    const response = await axios.post(
-      "https://google.serper.dev/images",
-      { q: "site:aliexpress.com", image_url: imageUrl, num: limit },
-      { headers: { "X-API-KEY": process.env.SERPER_API_KEY } }
-    );
+    const etsyUrl = `https://www.etsy.com/search?q=${encodeURIComponent(keyword)}`;
+    const response = await axios.get(etsyUrl);
+    const html = response.data;
 
-    if (!response.data?.images) return [];
+    const imageRegex = /https:\/\/i\.etsystatic\.com[^"]+/g;
+    const images = [...html.matchAll(imageRegex)].map(m => m[0]).slice(0, maxItems);
 
-    return response.data.images.slice(0, limit).map(img => ({
-      image: img.thumbnail || img.link,
-      link: img.link
-    }));
+    res.json({ results: images.map(img => ({ image: img, link: "#" })) });
   } catch (err) {
-    console.error("Serper search error:", err.message);
-    return [];
+    console.error("Etsy fetch error:", err.message);
+    res.status(500).json({ error: "Failed to fetch Etsy images" });
   }
-}
+});
 
-// ===========================================
-// OPENAI IMAGE SIMILARITY
-// ===========================================
-async function checkSimilarity(imageA, imageB) {
-  try {
-    const response = await axios.post(
-      "https://api.openai.com/v1/chat/completions",
-      {
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "user",
-            content: [
-              { type: "text", text: "Return only similarity score between 0 and 100." },
-              { type: "image_url", image_url: { url: imageA } },
-              { type: "image_url", image_url: { url: imageB } }
-            ]
-          }
-        ]
-      },
-      { headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` } }
-    );
-
-    const text = response.data.choices[0].message.content;
-    const match = text.match(/\d+/);
-    const score = match ? parseInt(match[0]) : 0;
-    console.log("Similarity score:", score, imageA, imageB);
-    return score;
-  } catch (err) {
-    console.error("OpenAI Vision error:", err.message);
-    return 0;
-  }
-}
-
-// ===========================================
-// ANALYZE ROUTE
-// ===========================================
+// ROUTE : analyse images Etsy et recherche sur AliExpress
 app.post("/analyze-etsy", async (req, res) => {
   const { etsyImages } = req.body;
-  if (!etsyImages || !Array.isArray(etsyImages)) {
-    return res.status(400).json({ error: "etsyImages must be an array of URLs" });
-  }
+  if (!etsyImages || !etsyImages.length) return res.status(400).json({ error: "No Etsy images provided" });
 
   const results = [];
 
-  for (let i = 0; i < etsyImages.length; i++) {
-    const etsyImage = etsyImages[i];
-    console.log(`🔎 Searching AliExpress images for Etsy image ${i + 1}`);
+  for (const etsyImage of etsyImages) {
+    try {
+      console.log("🔎 Searching AliExpress for Etsy image:", etsyImage);
 
-    const aliImages = await searchAliExpressImages(etsyImage, 5);
+      // Rechercher images AliExpress (Serper API)
+      const searchRes = await axios.post(
+        "https://google.serper.dev/images",
+        { q: "site:aliexpress.com", image_url: etsyImage, num: 5 },
+        { headers: { "X-API-KEY": process.env.SERPER_API_KEY } }
+      );
 
-    for (const ali of aliImages) {
-      const score = await checkSimilarity(etsyImage, ali.image);
+      const aliImages = (searchRes.data.images || []).slice(0, 5);
 
-      // ✅ garder uniquement les scores >= 40%
-      if (score >= 40) {
-        results.push({
-          etsyImage,
-          aliImage: ali.image,
-          aliLink: ali.link,
-          similarity: score
-        });
+      for (const ali of aliImages) {
+        // Comparer via OpenAI Vision
+        const visionRes = await axios.post(
+          "https://api.openai.com/v1/chat/completions",
+          {
+            model: "gpt-4o-mini",
+            messages: [
+              {
+                role: "user",
+                content: [
+                  { type: "text", text: "Return similarity score 0 to 100" },
+                  { type: "image_url", image_url: { url: etsyImage } },
+                  { type: "image_url", image_url: { url: ali.thumbnail || ali.link } }
+                ]
+              }
+            ]
+          },
+          { headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` } }
+        );
+
+        const text = visionRes.data.choices[0].message.content;
+        const score = parseInt(text.match(/\d+/)?.[0] || "0");
+        console.log("Similarity score:", score);
+
+        if (score >= 40) {
+          results.push({
+            etsyImage,
+            aliImage: ali.thumbnail || ali.link,
+            aliLink: ali.link,
+            similarity: score
+          });
+        }
       }
+    } catch (err) {
+      console.error("Analyze Etsy image error:", err.message);
     }
   }
 
-  if (results.length === 0) {
-    console.log("No results with similarity >= 40%");
-  }
-
+  if (results.length === 0) console.log("No results with similarity ≥ 40%");
   res.json({ results });
 });
 
-// ===========================================
-// START SERVER
-// ===========================================
 server.listen(process.env.PORT || 3000, () => {
   console.log("🚀 Server running");
 });
