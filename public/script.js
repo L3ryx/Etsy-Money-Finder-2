@@ -1,67 +1,105 @@
 const socket = io();
 let socketId = null;
 
+// Connection
 socket.on("connected", (data) => {
   socketId = data.socketId;
-  logMessage("Connected to server");
+  addLog("Connected to server");
 });
 
+// Receive logs
 socket.on("log", (data) => {
-  logMessage(`[${data.type.toUpperCase()}] ${data.message}`);
+  addLog(`[${data.type}] ${data.message}`);
 });
 
-function logMessage(message) {
-  const logsDiv = document.getElementById("logs");
+// Add log to div
+function addLog(message) {
+  const logs = document.getElementById("logs");
   const p = document.createElement("p");
-  p.textContent = message;
-  logsDiv.appendChild(p);
-  logsDiv.scrollTop = logsDiv.scrollHeight;
+  p.textContent = `${new Date().toLocaleTimeString()} - ${message}`;
+  logs.appendChild(p);
+  logs.scrollTop = logs.scrollHeight;
 }
 
-// ========================
-// Search Etsy
-// ========================
-async function search() {
-  const keyword = document.getElementById("keyword").value;
+// Search Etsy button
+document.getElementById("searchBtn").addEventListener("click", async () => {
+  const keyword = document.getElementById("keyword").value.trim();
   const limit = document.getElementById("limit").value;
+
   if (!keyword) return alert("Enter a keyword");
 
-  logMessage(`Searching Etsy for "${keyword}"`);
+  addLog(`Searching Etsy for "${keyword}"...`);
+  document.getElementById("results").innerHTML = "";
 
   try {
-    const resp = await fetch("/search-etsy", {
+    const res = await fetch("/search-etsy", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ keyword, limit })
     });
-    const data = await resp.json();
-    displayResults(data.results);
+    const data = await res.json();
+
+    if (data.error) return addLog(`❌ ${data.error}`);
+
+    addLog(`Found ${data.results.length} Etsy items`);
+
+    // Display Etsy items
+    for (const item of data.results) {
+      const card = document.createElement("div");
+      card.className = "result-card";
+      card.innerHTML = `
+        <a href="${item.link}" target="_blank">
+          <img src="${item.image}" alt="Etsy image">
+        </a>
+        <p>Etsy item</p>
+      `;
+      document.getElementById("results").appendChild(card);
+
+      // Automatically analyze image
+      analyzeImage(item.image);
+    }
+
   } catch (err) {
-    logMessage("❌ Etsy search failed: " + err.message);
+    addLog(`❌ Etsy search failed: ${err.message}`);
   }
-}
+});
 
-// ========================
-// Display results
-// ========================
-function displayResults(results) {
-  const resultsDiv = document.getElementById("results");
-  resultsDiv.innerHTML = "";
+// Analyze a single image via /analyze-images
+async function analyzeImage(imageUrl) {
+  addLog(`Starting analysis for image`);
 
-  results.forEach(item => {
-    const div = document.createElement("div");
-    div.className = "result-card";
+  try {
+    // Convert image URL to Blob
+    const imgResp = await fetch(imageUrl);
+    const blob = await imgResp.blob();
+    const file = new File([blob], "etsy.jpg", { type: blob.type });
 
-    const etsyImg = document.createElement("img");
-    etsyImg.src = item.image;
-    const etsyLink = document.createElement("a");
-    etsyLink.href = item.link;
-    etsyLink.target = "_blank";
-    etsyLink.textContent = "Etsy link";
+    const formData = new FormData();
+    formData.append("socketId", socketId);
+    formData.append("images", file);
 
-    div.appendChild(etsyImg);
-    div.appendChild(etsyLink);
+    const res = await fetch("/analyze-images", { method: "POST", body: formData });
+    const data = await res.json();
 
-    resultsDiv.appendChild(div);
-  });
+    for (const result of data.results) {
+      const card = document.createElement("div");
+      card.className = "result-card";
+
+      let html = `<img src="${result.etsyImage}" alt="Etsy"> Etsy image<br>`;
+      if (result.matches.length > 0) {
+        for (const match of result.matches) {
+          html += `<a href="${match.url}" target="_blank"><img src="${match.image}" alt="AliExpress"></a>
+                   <p>Similarity: ${(match.similarity*100).toFixed(0)}%</p>`;
+        }
+      } else {
+        html += "<p>No similar AliExpress results</p>";
+      }
+
+      card.innerHTML = html;
+      document.getElementById("results").appendChild(card);
+    }
+
+  } catch (err) {
+    addLog(`❌ Image analysis failed: ${err.message}`);
+  }
 }
