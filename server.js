@@ -67,37 +67,50 @@ app.post("/search-etsy", async (req, res) => {
   }
 });
 
-// ========================
-// OpenAI Similarity
-// ========================
+/*
+====================================================
+SIMILARITY
+====================================================
+*/
 
-async function calculateSimilarity(imgA, imgB) {
-  try {
-    const resp = await axios.post(
-      "https://api.openai.com/v1/chat/completions",
-      {
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "user",
-            content: [
-              { type: "text", text: "Return similarity score between 0 and 100." },
-              { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imgA}` } },
-              { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imgB}` } },
-            ],
-          },
-        ],
-      },
-      { headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" } }
-    );
+async function calculateSimilarity(base64A, base64B) {
 
-    const text = resp.data.choices[0].message.content;
-    const match = text.match(/\d+/);
-    return match ? parseInt(match[0]) : 0;
-  } catch (err) {
-    console.error("OpenAI error:", err.message);
-    return 0;
-  }
+  const response = await axios.post(
+    "https://api.openai.com/v1/chat/completions",
+    {
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "Return only similarity 0 to 1." },
+            {
+              type: "image_url",
+              image_url: {
+                url: `data:image/jpeg;base64,${base64A}`
+              }
+            },
+            {
+              type: "image_url",
+              image_url: {
+                url: `data:image/jpeg;base64,${base64B}`
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
+      }
+    }
+  );
+
+  const text = response.data.choices[0].message.content;
+  const match = text.match(/0\.\d+|1(\.0+)?/);
+
+  return match ? parseFloat(match[0]) : 0;
 }
 
 // ========================
