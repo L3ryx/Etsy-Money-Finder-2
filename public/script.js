@@ -1,117 +1,104 @@
-// script.js
-
 const socket = io();
+let socketId = null;
 
-// ==========================
-// LOGS SOCKET
-// ==========================
-socket.on("log", (data) => {
-  const logsDiv = document.getElementById("logs");
-  logsDiv.innerHTML += `[${data.time}] ${data.message}<br>`;
-  logsDiv.scrollTop = logsDiv.scrollHeight;
-});
+const logsDiv = document.getElementById("logs");
+const resultsDiv = document.getElementById("results");
+const searchBtn = document.getElementById("searchBtn");
 
 socket.on("connected", (data) => {
-  console.log("Connected to server, socketId:", data.socketId);
-  window.socketId = data.socketId;
+    socketId = data.socketId;
+    addLog(`🟢 Connected with socketId: ${socketId}`);
 });
 
-// ==========================
-// SEARCH ETSY + ANALYSE
-// ==========================
+socket.on("log", (data) => {
+    addLog(data.message);
+});
+
+function addLog(message) {
+    const time = new Date().toLocaleTimeString();
+    logsDiv.innerHTML += `[${time}] ${message}<br>`;
+    logsDiv.scrollTop = logsDiv.scrollHeight;
+}
+
 async function search() {
-  const keyword = document.getElementById("keyword").value.trim();
-  const limit = document.getElementById("limit").value || 10;
+    const keyword = document.getElementById("keyword").value.trim();
+    const limit = document.getElementById("limit").value || 10;
 
-  if (!keyword) return alert("Please enter a keyword");
-
-  document.getElementById("results").innerHTML = "";
-  document.getElementById("logs").innerHTML = "";
-
-  console.log("Starting Etsy search for:", keyword);
-
-  try {
-    // 1️⃣ Requête vers le serveur pour chercher Etsy
-    const res = await fetch("/search-etsy", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ keyword, limit })
-    });
-    const data = await res.json();
-    const etsyItems = data.results;
-
-    if (!etsyItems.length) {
-      alert("No Etsy items found");
-      return;
+    if (!keyword) {
+        addLog("❌ Please enter a keyword");
+        return;
     }
 
-    // 2️⃣ Affiche les images Etsy
-    displayEtsyResults(etsyItems);
+    addLog(`🔎 Searching Etsy for "${keyword}"...`);
+    resultsDiv.innerHTML = "";
 
-    // 3️⃣ Prépare les images pour analyse
-    const formData = new FormData();
-    formData.append("socketId", window.socketId);
+    try {
+        const etsyRes = await fetch("/search-etsy", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ keyword, limit })
+        });
 
-    for (const item of etsyItems) {
-      const imageResp = await fetch(item.image);
-      const blob = await imageResp.blob();
-      formData.append("images", new File([blob], "image.jpg"));
+        const etsyData = await etsyRes.json();
+
+        if (!etsyData.results || etsyData.results.length === 0) {
+            addLog("⚠️ No Etsy results found");
+            return;
+        }
+
+        addLog(`✅ Found ${etsyData.results.length} Etsy items. Starting image analysis...`);
+
+        // Préparer les fichiers pour analyse
+        const formData = new FormData();
+        formData.append("socketId", socketId);
+
+        for (const item of etsyData.results) {
+            const imgBlob = await fetch(item.image).then(r => r.blob());
+            formData.append("images", imgBlob, "etsy.jpg");
+            formData.append("links", item.link);
+        }
+
+        // Envoyer au serveur pour analyse
+        const analyzeRes = await fetch("/analyze-images", {
+            method: "POST",
+            body: formData
+        });
+
+        const analyzeData = await analyzeRes.json();
+
+        // Afficher les résultats
+        for (let i = 0; i < analyzeData.results.length; i++) {
+            const etsyImage = analyzeData.results[i].image;
+            const matches = analyzeData.results[i].matches;
+
+            if (!matches || matches.length === 0) continue;
+
+            const topMatch = matches[0]; // Premier match avec similarity >= 60%
+
+            const card = document.createElement("div");
+            card.className = "result-card";
+
+            card.innerHTML = `
+                <div>
+                    <a href="${etsyData.results[i].link}" target="_blank">
+                        <img src="${etsyImage}" alt="Etsy Image">
+                    </a>
+                </div>
+                <div>
+                    <a href="${topMatch.url}" target="_blank">
+                        <img src="${topMatch.image}" alt="AliExpress Image">
+                    </a>
+                    <p>Similarity: ${topMatch.similarity}%</p>
+                </div>
+            `;
+
+            resultsDiv.appendChild(card);
+        }
+
+        addLog("🎉 Analysis complete!");
+
+    } catch (err) {
+        console.error(err);
+        addLog("❌ Error during search or analysis");
     }
-
-    // 4️⃣ Envoi au serveur pour analyse
-    console.log("Starting image analysis...");
-    const analyzeRes = await fetch("/analyze-images", {
-      method: "POST",
-      body: formData
-    });
-    const analyzeData = await analyzeRes.json();
-
-    // 5️⃣ Affiche les résultats AliExpress
-    displayAliResults(analyzeData.results);
-
-  } catch (err) {
-    console.error(err);
-    alert("Error during search. Check console.");
-  }
-}
-
-// ==========================
-// DISPLAY ETSY
-// ==========================
-function displayEtsyResults(items) {
-  const resultsDiv = document.getElementById("results");
-  items.forEach(item => {
-    const card = document.createElement("div");
-    card.className = "result-card";
-    card.innerHTML = `
-      <div>
-        <a href="${item.link}" target="_blank">
-          <img src="${item.image}" alt="Etsy">
-        </a>
-      </div>
-      <div class="ali-results"></div>
-    `;
-    resultsDiv.appendChild(card);
-  });
-}
-
-// ==========================
-// DISPLAY ALIEXPRESS
-// ==========================
-function displayAliResults(analyzeResults) {
-  const resultCards = document.querySelectorAll(".result-card");
-  analyzeResults.forEach((item, idx) => {
-    const aliDiv = resultCards[idx].querySelector(".ali-results");
-    item.matches.forEach(match => {
-      const matchEl = document.createElement("div");
-      matchEl.style.marginTop = "10px";
-      matchEl.innerHTML = `
-        <a href="${match.url}" target="_blank">
-          <img src="${match.image}" style="width:100px; border-radius:6px;">
-          <p style="margin:0; font-size:12px;">Similarity: ${match.similarity}%</p>
-        </a>
-      `;
-      aliDiv.appendChild(matchEl);
-    });
-  });
 }
