@@ -1,106 +1,80 @@
-import dotenv from "dotenv";
-dotenv.config();
-
 import express from "express";
 import axios from "axios";
-import http from "http";
-import { Server } from "socket.io";
+import dotenv from "dotenv";
 
+dotenv.config();
 const app = express();
-const server = http.createServer(app);
-const io = new Server(server);
-
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(express.static("public"));
 
 /* ===================================================== */
-/* 🔎 ETSY SEARCH (IMAGE + LINK) */
+/* 🔎 SEARCH ETSY */
 /* ===================================================== */
+
 app.post("/search-etsy", async (req, res) => {
   const { keyword, limit } = req.body;
   if (!keyword) return res.status(400).json({ error: "Keyword required" });
 
   const maxItems = Math.min(parseInt(limit) || 10, 50);
+  const etsyUrl = `https://www.etsy.com/search?q=${encodeURIComponent(keyword)}`;
 
   try {
-    // URL Etsy
-    const etsyUrl = `https://www.etsy.com/search?q=${encodeURIComponent(keyword)}`;
-
-    // ScraperAPI pour récupérer HTML Etsy
-    const scraperRes = await axios.get("https://api.scraperapi.com/", {
+    // Appel ScraperAPI pour récupérer le HTML d'Etsy
+    const htmlRes = await axios.get("https://api.scraperapi.com/", {
       params: {
-        api_key: process.env.SCRAPAPI_KEY,
+        api_key: process.env.SCRAPERAPI_KEY,
         url: etsyUrl,
         render: true
       }
     });
 
-    const html = scraperRes.data;
-
-    // Extraction images et liens Etsy
+    const html = htmlRes.data;
     const imageRegex = /https:\/\/i\.etsystatic\.com[^"]+/g;
-    const linkRegex = /https:\/\/www\.etsy\.com\/listing\/\d+/g;
-
-    const images = [...html.matchAll(imageRegex)].map(m => m[0]);
-    const links = [...html.matchAll(linkRegex)].map(m => m[0]);
+    const images = [...html.matchAll(imageRegex)].map(m => m[0]).slice(0, maxItems);
 
     const results = [];
 
-    for (let i = 0; i < Math.min(maxItems, images.length); i++) {
-      const etsyImage = images[i];
-      const etsyLink = links[i] || etsyUrl;
+    for (const img of images) {
 
-      // Reverse Image Search Google via ScraperAPI
-      const reverseUrl = `https://www.google.com/searchbyimage?&image_url=${encodeURIComponent(etsyImage)}`;
+      // 🔹 Reverse image via Serper
+      try {
+        const serperRes = await axios.post(
+          "https://google.serper.dev/search",
+          { image_url: img, num: 10 },
+          { headers: { "X-API-KEY": process.env.SERPER_KEY, "Content-Type": "application/json" } }
+        );
 
-      const reverseRes = await axios.get("https://api.scraperapi.com/", {
-        params: {
-          api_key: process.env.SCRAPAPI_KEY,
-          url: reverseUrl,
-          render: true
-        }
-      });
+        // 🔹 Filtrer uniquement AliExpress
+        const aliResults = (serperRes.data.image_results || [])
+          .filter(r => r.link.includes("aliexpress.com"))
+          .slice(0, 5);
 
-      const reverseHTML = reverseRes.data;
+        results.push({
+          etsy_image: img,
+          ali_results: aliResults.map(r => ({
+            url: r.link,
+            thumbnail: r.thumbnail,
+            title: r.title
+          }))
+        });
 
-      // Extraire uniquement liens AliExpress
-      const aliexpressRegex = /https:\/\/www\.aliexpress\.com\/item\/\d+/g;
-      const aliexpressLinks = [...reverseHTML.matchAll(aliexpressRegex)]
-        .map(m => m[0])
-        .slice(0, 5);
-
-      // Créer objets avec miniatures
-      const aliexpressResults = aliexpressLinks.map(link => ({
-        link,
-        image: `${link}` // On peut garder la même image Etsy ou récupérer thumbnail via scraping plus avancé
-      }));
-
-      results.push({
-        etsy: { image: etsyImage, link: etsyLink },
-        aliexpress: aliexpressResults
-      });
+      } catch (err) {
+        console.error("Serper Error:", err.response?.data || err.message);
+        results.push({ etsy_image: img, ali_results: [] });
+      }
     }
 
     res.json({ results });
 
   } catch (err) {
-    console.error("Search Error:", err.message);
-    res.status(500).json({ error: "Scraping failed" });
+    console.error("Etsy Scraping Error:", err.message);
+    res.status(500).json({ error: "Failed to scrape Etsy" });
   }
 });
 
 /* ===================================================== */
-/* SOCKET CONNECTION (optionnel pour log) */
+/* START SERVER */
 /* ===================================================== */
-io.on("connection", socket => {
-  console.log("🟢 Client connected:", socket.id);
-});
 
-/* ===================================================== */
-/* SERVER START */
-/* ===================================================== */
 const PORT = process.env.PORT || 10000;
-server.listen(PORT, () => {
-  console.log("🚀 Server running on port", PORT);
-});
+app.listen(PORT, () => console.log("🚀 Server running on port", PORT));
