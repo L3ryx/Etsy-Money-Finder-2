@@ -11,28 +11,24 @@ const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
 // ========================
-// Middleware
+// MIDDLEWARE
 // ========================
-
 const upload = multer({ storage: multer.memoryStorage() });
-
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static("public"));
 
 // ========================
-// Logging helper
+// LOGGING HELPER
 // ========================
-
 function sendLog(socket, message, type = "info") {
   console.log(`[${type.toUpperCase()}] ${message}`);
   if (socket) socket.emit("log", { type, message, time: new Date().toISOString() });
 }
 
 // ========================
-// ETSY Search
+// 🔎 ETSY SEARCH
 // ========================
-
 app.post("/search-etsy", async (req, res) => {
   const { keyword, limit } = req.body;
   if (!keyword) return res.status(400).json({ error: "Keyword required" });
@@ -67,60 +63,44 @@ app.post("/search-etsy", async (req, res) => {
   }
 });
 
-/*
-====================================================
-SIMILARITY
-====================================================
-*/
-
+// ========================
+// 🧠 OPENAI SIMILARITY FUNCTION
+// ========================
 async function calculateSimilarity(base64A, base64B) {
+  try {
+    const response = await axios.post(
+      "https://api.openai.com/v1/chat/completions",
+      {
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "Return only similarity 0 to 1." },
+              { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64A}` } },
+              { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64B}` } }
+            ]
+          }
+        ]
+      },
+      { headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` } }
+    );
 
-  const response = await axios.post(
-    "https://api.openai.com/v1/chat/completions",
-    {
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "user",
-          content: [
-            { type: "text", text: "Return only similarity 0 to 1." },
-            {
-              type: "image_url",
-              image_url: {
-                url: `data:image/jpeg;base64,${base64A}`
-              }
-            },
-            {
-              type: "image_url",
-              image_url: {
-                url: `data:image/jpeg;base64,${base64B}`
-              }
-            }
-          ]
-        }
-      ]
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
-      }
-    }
-  );
-
-  const text = response.data.choices[0].message.content;
-  const match = text.match(/0\.\d+|1(\.0+)?/);
-
-  return match ? parseFloat(match[0]) : 0;
+    const text = response.data.choices[0].message.content;
+    const match = text.match(/0\.\d+|1(\.0+)?/);
+    return match ? parseFloat(match[0]) : 0;
+  } catch (err) {
+    console.error("OpenAI error:", err.message);
+    return 0;
+  }
 }
 
 // ========================
-// Analyze Images + AliExpress
+// 🧠 IMAGE ANALYSIS PIPELINE
 // ========================
-
 app.post("/analyze-images", upload.array("images"), async (req, res) => {
   const socketId = req.body.socketId;
   const socket = io.sockets.sockets.get(socketId);
-
   const results = [];
 
   for (const file of req.files) {
@@ -142,7 +122,7 @@ app.post("/analyze-images", upload.array("images"), async (req, res) => {
       continue;
     }
 
-    // 2️⃣ Reverse image search on Serper
+    // 2️⃣ Reverse image search Serper
     let serperResults = [];
     try {
       const serperResp = await axios.post(
@@ -152,9 +132,6 @@ app.post("/analyze-images", upload.array("images"), async (req, res) => {
       );
       serperResults = serperResp.data.images || [];
       sendLog(socket, `🔎 Serper returned ${serperResults.length} images`);
-      serperResults.forEach((img, idx) =>
-        sendLog(socket, `${idx + 1}: ${img.link} | ${img.thumbnail}`)
-      );
     } catch (err) {
       sendLog(socket, `❌ Serper failed: ${err.message}`, "error");
     }
@@ -171,19 +148,16 @@ app.post("/analyze-images", upload.array("images"), async (req, res) => {
         const aliResp = await axios.get(item.thumbnail, { responseType: "arraybuffer" });
         const base64B = Buffer.from(aliResp.data).toString("base64");
         similarity = await calculateSimilarity(base64, base64B);
-        sendLog(socket, `Similarity with ${item.link}: ${similarity}%`);
+        sendLog(socket, `Similarity with ${item.link}: ${similarity}`);
       } catch (err) {
         sendLog(socket, `❌ Similarity check failed: ${err.message}`, "error");
       }
 
       matches.push({ url: item.link, image: item.thumbnail, similarity });
-
-      // Stop if similarity >= 60
-      if (similarity >= 60) break;
+      if (similarity >= 0.6) break;
     }
 
     if (matches.length === 0) sendLog(socket, "⚠️ No similar AliExpress results found");
-
     results.push({ etsyImage: imageUrl, matches });
   }
 
@@ -191,17 +165,15 @@ app.post("/analyze-images", upload.array("images"), async (req, res) => {
 });
 
 // ========================
-// Socket connection
+// SOCKET CONNECTION
 // ========================
-
 io.on("connection", (socket) => {
   socket.emit("connected", { socketId: socket.id });
   sendLog(socket, "🟢 Client connected");
 });
 
 // ========================
-// Server start
+// SERVER START
 // ========================
-
 const PORT = process.env.PORT || 10000;
 server.listen(PORT, () => sendLog(null, `🚀 Server running on port ${PORT}`));
