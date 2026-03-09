@@ -1,4 +1,5 @@
 require("dotenv").config();
+
 const express = require("express");
 const axios = require("axios");
 const http = require("http");
@@ -12,93 +13,146 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static("public"));
 
-// TEST SOCKET
-io.on("connection", (socket) => {
-  console.log("🟢 Client connected");
-});
+/* ===================================================== */
+/* SOCKET LOG SYSTEM */
+/* ===================================================== */
+function sendLog(socket, message) {
+  console.log(message);
+  if (socket) {
+    socket.emit("log", { message, time: new Date().toISOString() });
+  }
+}
 
-// ROUTE : récupérer Etsy images via mot-clé
+/* ===================================================== */
+/* 🔎 ETSY SEARCH (IMAGE + LINK) */
+/* ===================================================== */
 app.post("/search-etsy", async (req, res) => {
   const { keyword, limit } = req.body;
-  const maxItems = Math.min(parseInt(limit) || 5, 5);
+  if (!keyword) return res.status(400).json({ error: "Keyword required" });
 
+  const maxItems = Math.min(parseInt(limit) || 10, 50);
   try {
     const etsyUrl = `https://www.etsy.com/search?q=${encodeURIComponent(keyword)}`;
-    const response = await axios.get(etsyUrl);
-    const html = response.data;
+    const scraperRes = await axios.get("https://api.scraperapi.com/", {
+      params: { api_key: process.env.SCRAPAPI_KEY, url: etsyUrl, render: true },
+    });
 
+    const html = scraperRes.data;
     const imageRegex = /https:\/\/i\.etsystatic\.com[^"]+/g;
-    const images = [...html.matchAll(imageRegex)].map(m => m[0]).slice(0, maxItems);
+    const linkRegex = /https:\/\/www\.etsy\.com\/listing\/\d+/g;
 
-    res.json({ results: images.map(img => ({ image: img, link: "#" })) });
+    const images = [...html.matchAll(imageRegex)].map(m => m[0]);
+    const links = [...html.matchAll(linkRegex)].map(m => m[0]);
+
+    const etsyResults = [];
+    for (let i = 0; i < Math.min(maxItems, images.length); i++) {
+      etsyResults.push({ image: images[i], link: links[i] || etsyUrl });
+    }
+
+    res.json({ results: etsyResults });
   } catch (err) {
-    console.error("Etsy fetch error:", err.message);
-    res.status(500).json({ error: "Failed to fetch Etsy images" });
+    console.error("ScraperAPI Error:", err.message);
+    res.status(500).json({ error: "Scraping failed" });
   }
 });
 
-// ROUTE : analyse images Etsy et recherche sur AliExpress
-app.post("/analyze-etsy", async (req, res) => {
-  const { etsyImages } = req.body;
-  if (!etsyImages || !etsyImages.length) return res.status(400).json({ error: "No Etsy images provided" });
+/* ===================================================== */
+/* 🔄 REVERSE IMAGE SEARCH + COMPARISON (AUTO) */
+/* ===================================================== */
+app.post("/compare-etsy-aliexpress", async (req, res) => {
+  const { etsyResults } = req.body;
+  const socketId = req.body.socketId;
+  const socket = io.sockets.sockets.get(socketId);
 
-  const results = [];
+  if (!etsyResults || !etsyResults.length)
+    return res.status(400).json({ error: "No Etsy images provided" });
 
-  for (const etsyImage of etsyImages) {
+  const finalResults = [];
+
+  for (const etsy of etsyResults) {
+    sendLog(socket, `🔎 Searching AliExpress images for Etsy image`);
+
     try {
-      console.log("🔎 Searching AliExpress for Etsy image:", etsyImage);
-
-      // Rechercher images AliExpress (Serper API)
-      const searchRes = await axios.post(
+      // REVERSE IMAGE SEARCH via SERPER API
+      const serpRes = await axios.post(
         "https://google.serper.dev/images",
-        { q: "site:aliexpress.com", image_url: etsyImage, num: 5 },
+        {
+          q: "site:aliexpress.com",
+          image_url: etsy.image,
+          num: 5,
+        },
         { headers: { "X-API-KEY": process.env.SERPER_API_KEY } }
       );
 
-      const aliImages = (searchRes.data.images || []).slice(0, 5);
+      const aliImages = (serpRes.data?.images || []).slice(0, 5);
 
+      const matches = [];
       for (const ali of aliImages) {
-        // Comparer via OpenAI Vision
-        const visionRes = await axios.post(
-          "https://api.openai.com/v1/chat/completions",
-          {
-            model: "gpt-4o-mini",
-            messages: [
-              {
-                role: "user",
-                content: [
-                  { type: "text", text: "Return similarity score 0 to 100" },
-                  { type: "image_url", image_url: { url: etsyImage } },
-                  { type: "image_url", image_url: { url: ali.thumbnail || ali.link } }
-                ]
-              }
-            ]
-          },
-          { headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` } }
-        );
+        // Compare with OpenAI Vision
+        try {
+          const visionRes = await axios.post(
+            "https://api.openai.com/v1/chat/completions",
+            {
+              model: "gpt-4o-mini",
+              messages: [
+                {
+                  role: "user",
+                  content: [
+                    { type: "text", text: "Return similarity score between 0 and 100." },
+                    { type: "image_url", image_url: { url: etsy.image } },
+                    { type: "image_url", image_url: { url: ali.thumbnail || ali.link } }
+                  ]
+                }
+              ]
+            },
+            {
+              headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` }
+            }
+          );
 
-        const text = visionRes.data.choices[0].message.content;
-        const score = parseInt(text.match(/\d+/)?.[0] || "0");
-        console.log("Similarity score:", score);
+          const scoreText = visionRes.data.choices[0].message.content;
+          const score = parseInt(scoreText.match(/\d+/)?.[0] || "0");
+          console.log("Similarity score:", score);
 
-        if (score >= 40) {
-          results.push({
-            etsyImage,
-            aliImage: ali.thumbnail || ali.link,
-            aliLink: ali.link,
-            similarity: score
-          });
+          if (score >= 40) { // Seuil 40%
+            matches.push({
+              etsyImage: etsy.image,
+              etsyLink: etsy.link,
+              aliImage: ali.thumbnail || ali.link,
+              aliLink: ali.link,
+              similarity: score
+            });
+          }
+
+        } catch (err) {
+          console.error("OpenAI Vision Error:", err.message);
         }
       }
+
+      if (matches.length) finalResults.push(...matches);
+
     } catch (err) {
-      console.error("Analyze Etsy image error:", err.message);
+      console.error("Serper Error:", err.message);
     }
   }
 
-  if (results.length === 0) console.log("No results with similarity ≥ 40%");
-  res.json({ results });
+  if (!finalResults.length) {
+    return res.json({ message: "No results with similarity ≥ 40%" });
+  }
+
+  res.json({ results: finalResults });
 });
 
-server.listen(process.env.PORT || 3000, () => {
-  console.log("🚀 Server running");
+/* ===================================================== */
+/* SOCKET CONNECTION */
+/* ===================================================== */
+io.on("connection", socket => {
+  socket.emit("connected", { socketId: socket.id });
+  console.log("🟢 Client connected");
 });
+
+/* ===================================================== */
+/* START SERVER */
+/* ===================================================== */
+const PORT = process.env.PORT || 10000;
+server.listen(PORT, () => console.log("🚀 Server running on port", PORT));
