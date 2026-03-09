@@ -1,7 +1,8 @@
-// server.js
+require("dotenv").config();
+
 const express = require("express");
+const multer = require("multer");
 const axios = require("axios");
-const cors = require("cors");
 const http = require("http");
 const { Server } = require("socket.io");
 
@@ -9,112 +10,139 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
-app.use(cors());
+/* ===================================================== */
+/* MIDDLEWARE */
+/* ===================================================== */
+
+const upload = multer({ storage: multer.memoryStorage() });
+
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 app.use(express.static("public"));
 
-// =====================================================
-// ROUTE TEST
-// =====================================================
-app.get("/", (req, res) => {
-  res.send("Server is running 🚀");
-});
+/* ===================================================== */
+/* SOCKET LOG SYSTEM */
+/* ===================================================== */
 
-// =====================================================
-// ROUTE SEARCH ETSY + REVERSE IMAGE + ALIEXPRESS
-// =====================================================
+function sendLog(socket, message) {
+  console.log(message);
+  if (socket) {
+    socket.emit("log", { message, time: new Date().toISOString() });
+  }
+}
+
+/* ===================================================== */
+/* 🔎 ETSY SEARCH (IMAGE + LINK STABLE EXTRACTION) */
+/* ===================================================== */
+
 app.post("/search-etsy", async (req, res) => {
-  const { keyword, limit, socketId } = req.body;
+  const { keyword, limit } = req.body;
+
+  if (!keyword) return res.status(400).json({ error: "Keyword required" });
+
+  const maxItems = Math.min(parseInt(limit) || 10, 50);
+
   try {
-    // 1️⃣ Recherche Etsy (mock ou API)
-    const etsyResults = await searchEtsy(keyword, limit);
+    const etsyUrl = `https://www.etsy.com/search?q=${encodeURIComponent(keyword)}`;
 
-    // 2️⃣ Parallélisation avec Promise.all
-    const finalResults = await Promise.all(
-      etsyResults.map(async (etsyItem, index) => {
-        // 🔹 Reverse image Google (mock pour test)
-        const reverseImageUrl = await reverseImageGoogle(etsyItem.image);
+    const scraperResponse = await axios.get("https://api.scraperapi.com/", {
+      params: { api_key: process.env.SCRAPAPI_KEY, url: etsyUrl, render: true }
+    });
 
-        // 🔹 Recherche AliExpress filtrée
-        const aliexpressResults = await searchAliExpress(reverseImageUrl);
+    const html = scraperResponse.data;
 
-        // 🔹 Emission progress via socket
-        if (socketId) {
-          const percent = Math.floor(((index + 1) / etsyResults.length) * 100);
-          io.to(socketId).emit("progress", { percent });
+    const imageRegex = /https:\/\/i\.etsystatic\.com[^"]+/g;
+    const linkRegex = /https:\/\/www\.etsy\.com\/listing\/\d+/g;
+
+    const images = [...html.matchAll(imageRegex)].map(m => m[0]);
+    const links = [...html.matchAll(linkRegex)].map(m => m[0]);
+
+    const results = [];
+    for (let i = 0; i < Math.min(maxItems, images.length); i++) {
+      results.push({ image: images[i], link: links[i] || etsyUrl });
+    }
+
+    res.json({ results });
+  } catch (err) {
+    console.error("ScraperAPI Error:", err.message);
+    res.status(500).json({ error: "Scraping failed" });
+  }
+});
+
+/* ===================================================== */
+/* 🧠 IMAGE ANALYSIS + REVERSE IMAGE ALIEXPRESS */
+/* ===================================================== */
+
+app.post("/analyze-images", upload.array("images"), async (req, res) => {
+  const socketId = req.body.socketId;
+  const socket = io.sockets.sockets.get(socketId);
+
+  const results = [];
+
+  for (const file of req.files) {
+    sendLog(socket, `Processing ${file.originalname}`);
+    const base64 = file.buffer.toString("base64");
+
+    /* ================= UPLOAD IMGBB ================= */
+    let imageUrl;
+    try {
+      const uploadRes = await axios.post(
+        "https://api.imgbb.com/1/upload",
+        new URLSearchParams({ key: process.env.IMGBB_KEY, image: base64 })
+      );
+      imageUrl = uploadRes.data.data.url;
+      sendLog(socket, "Uploaded to IMGBB");
+    } catch {
+      sendLog(socket, "IMGBB upload failed");
+      continue;
+    }
+
+    /* ================= REVERSE IMAGE + ALIEXPRESS FILTER ================= */
+    let aliexpressResults = [];
+    try {
+      const reverseUrl = `https://www.google.com/searchbyimage?&image_url=${encodeURIComponent(imageUrl)}`;
+
+      const revRes = await axios.get("https://api.scraperapi.com", {
+        params: { api_key: process.env.SCRAPAPI_KEY, url: reverseUrl, render: true }
+      });
+
+      const htmlRev = revRes.data;
+
+      const imgRegex = /<img[^>]+src="([^">]+)"/g;
+      const linkRegex = /<a[^>]+href="([^">]+)"/g;
+
+      const allImages = [...htmlRev.matchAll(imgRegex)].map(m => m[1]);
+      const allLinks = [...htmlRev.matchAll(linkRegex)].map(m => m[1]);
+
+      for (let i = 0; i < allImages.length && aliexpressResults.length < 5; i++) {
+        if (allLinks[i] && allLinks[i].includes("aliexpress.com")) {
+          aliexpressResults.push({ image: allImages[i], link: allLinks[i] });
         }
+      }
 
-        return {
-          etsy: {
-            image: etsyItem.image,
-            link: etsyItem.link,
-            title: etsyItem.title,
-          },
-          aliexpress: aliexpressResults.slice(0, 5).map(item => ({
-            image: item.image,
-            link: item.link,
-            title: item.title,
-          })),
-        };
-      })
-    );
+      sendLog(socket, `Found ${aliexpressResults.length} AliExpress matches`);
+    } catch {
+      sendLog(socket, "Reverse image / AliExpress scraping failed");
+    }
 
-    res.json({ results: finalResults });
-  } catch (error) {
-    console.error("Search Error:", error.message);
-    res.status(500).json({ error: "Server error" });
+    results.push({ image: file.originalname, imgbbUrl: imageUrl, aliexpress: aliexpressResults });
   }
+
+  res.json({ results });
 });
 
-// =====================================================
-// MOCK FUNCTIONS
-// =====================================================
-async function searchEtsy(keyword, limit = 5) {
-  // Ici tu peux remplacer par ton vrai appel API Etsy
-  // Mock pour test :
-  const results = [];
-  for (let i = 1; i <= limit; i++) {
-    results.push({
-      title: `${keyword} Product ${i}`,
-      image: `https://picsum.photos/400/400?random=${i}`,
-      link: `https://etsy.com/product/${i}`,
-    });
-  }
-  return results;
-}
+/* ===================================================== */
+/* SOCKET CONNECTION */
+/* ===================================================== */
 
-async function reverseImageGoogle(imageUrl) {
-  // Ici tu peux remplacer par vrai reverse image Google
-  // Mock : retourne directement l'image pour test
-  return imageUrl;
-}
-
-async function searchAliExpress(imageUrl) {
-  // Ici tu peux utiliser ScraperAPI ou AliExpress API
-  // Mock pour test
-  const results = [];
-  for (let i = 1; i <= 5; i++) {
-    results.push({
-      title: `AliExpress Match ${i}`,
-      image: `https://picsum.photos/400/400?random=${i + 100}`,
-      link: `https://aliexpress.com/item/${i}`,
-    });
-  }
-  return results;
-}
-
-// =====================================================
-// SOCKET.IO
-// =====================================================
-io.on("connection", (socket) => {
+io.on("connection", socket => {
+  socket.emit("connected", { socketId: socket.id });
   console.log("🟢 Client connected");
-  socket.emit("connected", { id: socket.id });
 });
 
-// =====================================================
-// SERVER
-// =====================================================
+/* ===================================================== */
+/* SERVER START */
+/* ===================================================== */
+
 const PORT = process.env.PORT || 10000;
-server.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-});
+server.listen(PORT, () => console.log("🚀 Server running on port", PORT));
