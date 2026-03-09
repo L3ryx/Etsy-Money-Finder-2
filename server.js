@@ -11,7 +11,6 @@ import cheerio from "cheerio";
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
-
 const PORT = process.env.PORT || 10000;
 
 app.use(cors());
@@ -29,73 +28,59 @@ io.on("connection", socket => {
 // ========================
 // Utils
 // ========================
+function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 function sendLog(socket, message) {
     console.log(message);
     if (socket) socket.emit("log", { type: "info", message });
 }
 
-function delay(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-// Upload image to ImgBB
-async function uploadToImgBB(imageUrl) {
+// Upload image sur imgbb
+async function uploadToImgbb(imageUrl) {
     try {
         const form = new FormData();
         form.append("image", imageUrl);
-        form.append("key", process.env.IMGBB_API_KEY);
-        const resp = await axios.post("https://api.imgbb.com/1/upload", form, {
+        const resp = await axios.post(`https://api.imgbb.com/1/upload?key=${process.env.IMGBB_KEY}`, form, {
             headers: form.getHeaders()
         });
         return resp.data.data.url;
     } catch (err) {
-        console.error("ImgBB upload failed:", err.message);
-        return null;
+        console.error("Erreur imgbb:", err.message);
+        return imageUrl; // fallback si échec
     }
 }
 
-// Call OpenAI for similarity
-async function callOpenAIWithRetry(imageUrl, retries = 3, socket = null) {
-    for (let i = 0; i < retries; i++) {
-        try {
-            const vision = await axios.post(
-                "https://api.openai.com/v1/chat/completions",
-                {
-                    model: "gpt-4o-mini",
-                    messages: [
-                        {
-                            role: "user",
-                            content: [
-                                { type: "text", text: "Return similarity score between 0 and 100." },
-                                { type: "image_url", image_url: { url: imageUrl } }
-                            ]
-                        }
-                    ]
-                },
-                {
-                    headers: {
-                        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-                        "Content-Type": "application/json"
+// Appel OpenAI pour comparer deux images
+async function compareImagesOpenAI(imageUrl1, imageUrl2, socket = null) {
+    try {
+        const resp = await axios.post(
+            "https://api.openai.com/v1/chat/completions",
+            {
+                model: "gpt-4o-mini",
+                messages: [
+                    {
+                        role: "user",
+                        content: [
+                            { type: "text", text: "Compare these two images and return similarity score 0-100." },
+                            { type: "image_url", image_url: { url: imageUrl1 } },
+                            { type: "image_url", image_url: { url: imageUrl2 } }
+                        ]
                     }
-                }
-            );
-            const text = vision.data.choices[0].message.content;
-            const match = text.match(/\d+/);
-            const similarity = match ? parseInt(match[0]) : 0;
-            sendLog(socket, `AI Similarity: ${similarity}% for ${imageUrl}`);
-            return similarity;
-        } catch (err) {
-            if (err.response?.status === 429) {
-                sendLog(socket, `Rate limited by OpenAI, retrying in 2s for ${imageUrl}`);
-                await delay(2000);
-            } else {
-                sendLog(socket, `OpenAI Vision failed for ${imageUrl}`);
-                return 0;
-            }
-        }
+                ]
+            },
+            { headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` } }
+        );
+        const text = resp.data.choices[0].message.content;
+        const match = text.match(/\d+/);
+        const similarity = match ? parseInt(match[0]) : 0;
+        sendLog(socket, `AI similarity ${similarity}%`);
+        return similarity;
+    } catch (err) {
+        sendLog(socket, `OpenAI error for images`);
+        return 0;
     }
-    sendLog(socket, `OpenAI Vision failed after retries for ${imageUrl}`);
-    return 0;
 }
 
 // ========================
@@ -104,69 +89,52 @@ async function callOpenAIWithRetry(imageUrl, retries = 3, socket = null) {
 
 // 1️⃣ Recherche Etsy
 app.post("/search-etsy", async (req, res) => {
-    const { keyword, limit = 10 } = req.body;
+    const { keyword } = req.body;
     try {
-        const apiUrl = `http://api.scraperapi.com?api_key=${process.env.SCRAPER_API_KEY}&url=${encodeURIComponent(`https://www.etsy.com/search?q=${keyword}`)}`;
-        const resp = await axios.get(apiUrl);
-        const $ = cheerio.load(resp.data);
-
+        const etsyResp = await axios.get(`https://api.scraperapi.com/?api_key=${process.env.SCRAPERAPI_KEY}&url=https://www.etsy.com/search?q=${encodeURIComponent(keyword)}`);
+        const $ = cheerio.load(etsyResp.data);
         const results = [];
-        $("li[data-search-result]").each((i, el) => {
-            if (i >= limit) return false;
-            const img = $(el).find("img").attr("src");
+        $("li.wt-list-unstyled").slice(0, 10).each((i, el) => {
             const link = $(el).find("a").attr("href");
-            if (img && link) results.push({ etsyImage: img, etsyLink: link });
+            const img = $(el).find("img").attr("src");
+            if (link && img) results.push({ etsyLink: link, etsyImage: img });
         });
         res.json({ results });
     } catch (err) {
-        console.error(err);
+        console.error("Etsy search error:", err.message);
         res.status(500).json({ error: "Failed to search Etsy" });
     }
 });
 
-// 2️⃣ Recherche inversée + AliExpress + OpenAI
+// 2️⃣ Recherche Aliexpress + comparaison OpenAI
 app.post("/find-aliexpress", async (req, res) => {
-    const { etsyImage, etsyLink, socketId } = req.body;
+    const { etsyImage, socketId } = req.body;
     const socket = io.sockets.sockets.get(socketId);
     const results = [];
 
     try {
-        // Upload Etsy image sur imgbb
-        const imgbbUrl = await uploadToImgBB(etsyImage);
-        if (!imgbbUrl) return res.status(500).json({ error: "Failed to upload Etsy image" });
+        const etsyImagePublic = await uploadToImgbb(etsyImage);
 
-        sendLog(socket, `Uploaded Etsy image to ImgBB: ${imgbbUrl}`);
-
-        // Recherche inversée Google via Serper
-        const serperResp = await axios.get(`https://api.serper.dev/search?image_url=${encodeURIComponent(imgbbUrl)}&filter=aliexpress`, {
-            headers: { "X-API-KEY": process.env.SERPER_API_KEY }
+        // Recherche Google inversé via Serper
+        const serperResp = await axios.get(`https://google.serper.dev/search?image_url=${encodeURIComponent(etsyImagePublic)}&aliexpress=true`, {
+            headers: { "X-API-KEY": process.env.SERPER_KEY }
         });
 
-        // Récupérer 5 premières images + liens
-        const aliResults = serperResp.data.results.slice(0, 5).map(r => ({
-            aliImage: r.thumbnail || r.image,
-            aliLink: r.link
-        }));
-
-        // Comparaison OpenAI
+        const aliResults = serperResp.data.items.slice(0, 5); // 5 premiers résultats
         for (const item of aliResults) {
-            const similarity = await callOpenAIWithRetry(item.aliImage, 3, socket);
-            if (similarity >= 60) {
-                results.push({
-                    etsyImage,
-                    etsyLink,
-                    aliImage: item.aliImage,
-                    aliLink: item.aliLink,
-                    similarity
-                });
-                break; // Arrêter dès qu'une image est similaire ≥ 60%
-            }
+            const similarity = await compareImagesOpenAI(etsyImagePublic, item.image, socket);
+            results.push({
+                aliImage: item.image,
+                aliLink: item.link,
+                similarity
+            });
+            if (similarity >= 60) break; // Stop dès que threshold atteint
             await delay(500);
         }
 
         res.json({ matches: results });
     } catch (err) {
-        console.error(err);
+        console.error("Aliexpress search error:", err.message);
         res.status(500).json({ error: "Failed to find AliExpress matches" });
     }
 });
