@@ -3,7 +3,7 @@
 <head>
 
 <meta charset="UTF-8">
-<title>AI Product Finder</title>
+<title>Etsy → AliExpress Finder</title>
 
 <style>
 
@@ -11,13 +11,8 @@ body{
 font-family:Arial;
 background:#0f172a;
 color:white;
-padding:40px;
 text-align:center;
-}
-
-.container{
-max-width:700px;
-margin:auto;
+padding:40px;
 }
 
 input,button{
@@ -32,30 +27,24 @@ color:white;
 cursor:pointer;
 }
 
-button:hover{
-background:#16a34a;
-}
-
-#logs{
-background:#020617;
-padding:15px;
-margin-top:20px;
-height:200px;
-overflow:auto;
-text-align:left;
-border-radius:8px;
-}
-
 .result{
 background:#1e293b;
-margin-top:15px;
-padding:10px;
-border-radius:8px;
+margin-top:20px;
+padding:20px;
+border-radius:10px;
 }
 
 img{
-max-width:200px;
+width:200px;
 border-radius:6px;
+}
+
+#logs{
+background:black;
+padding:10px;
+margin-top:20px;
+height:150px;
+overflow:auto;
 }
 
 </style>
@@ -64,37 +53,20 @@ border-radius:6px;
 
 <body>
 
-<div class="container">
-
-<h1>AI Product Finder</h1>
-
-<h2>Search Etsy</h2>
+<h1>Etsy → AliExpress Product Finder</h1>
 
 <input id="keyword" placeholder="keyword">
-
 <input id="limit" type="number" value="10">
 
-<button onclick="searchEtsy()">
+<button onclick="search()">
 Search
 </button>
 
-<h2>Upload Images</h2>
-
-<input type="file" id="images" multiple>
-
-<button onclick="analyzeImages()">
-Analyze Images
-</button>
-
 <h2>Logs</h2>
-
 <div id="logs"></div>
 
 <h2>Results</h2>
-
 <div id="results"></div>
-
-</div>
 
 <script src="/socket.io/socket.io.js"></script>
 <script src="script.js"></script>
