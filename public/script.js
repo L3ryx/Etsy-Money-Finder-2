@@ -6,17 +6,17 @@ socket.on("connected", data => {
 
 socketId = data.socketId
 
-addLog("Connected to server")
+log("Connected to server")
 
 })
 
 socket.on("log", data => {
 
-addLog(data.message)
+log(data.message)
 
 })
 
-function addLog(message){
+function log(message){
 
 const logs = document.getElementById("logs")
 
@@ -30,24 +30,16 @@ logs.scrollTop = logs.scrollHeight
 
 }
 
-/* ============================= */
-/* ETSY SEARCH */
-/* ============================= */
+/* ========================= */
+/* SEARCH ETSY */
+/* ========================= */
 
 async function searchEtsy(){
 
 const keyword = document.getElementById("keyword").value
-const limit = document.getElementById("limit").value
+const limit = document.getElementById("limit").value || 10
 
-if(!keyword){
-
-alert("Enter keyword")
-
-return
-
-}
-
-addLog("Searching Etsy...")
+log("Searching Etsy...")
 
 const response = await fetch("/search-etsy",{
 
@@ -66,96 +58,127 @@ limit
 
 const data = await response.json()
 
-displayResults(data.results)
+displayEtsy(data.results)
 
 }
 
-/* ============================= */
-/* IMAGE ANALYSIS */
-/* ============================= */
+/* ========================= */
+/* ANALYZE IMAGE */
+/* ========================= */
 
-async function analyzeImages(){
+async function analyzeEtsyImage(imageUrl, etsyLink){
 
-const files = document.getElementById("images").files
+log("Analyzing Etsy image...")
 
-if(!files.length){
-
-alert("Select images")
-
-return
-
-}
-
-const formData = new FormData()
-
-for(const file of files){
-
-formData.append("images",file)
-
-}
-
-formData.append("socketId",socketId)
-
-addLog("Uploading images...")
-
-const response = await fetch("/analyze-images",{
+const response = await fetch("/reverse-image",{
 
 method:"POST",
 
-body:formData
+headers:{
+"Content-Type":"application/json"
+},
+
+body:JSON.stringify({
+imageUrl,
+limit:5
+})
 
 })
 
 const data = await response.json()
 
-displayResults(data.results)
+displayMatches(imageUrl, etsyLink, data.results)
 
 }
 
-/* ============================= */
-/* DISPLAY RESULTS */
-/* ============================= */
+/* ========================= */
+/* DISPLAY ETSY RESULTS */
+/* ========================= */
 
-function displayResults(results){
+function displayEtsy(results){
 
 const container = document.getElementById("results")
 
 container.innerHTML=""
 
-results.forEach(item =>{
+results.forEach(item=>{
 
-const div = document.createElement("div")
+const div=document.createElement("div")
 
 div.className="result"
 
-let html = `<strong>${item.image}</strong><br>`
+div.innerHTML=`
 
-if(item.link){
+<img src="${item.image}" width="150"><br>
 
-html += `<a href="${item.link}" target="_blank">View Listing</a><br>`
-html += `<img src="${item.image}"><br>`
+<a href="${item.link}" target="_blank">Etsy Listing</a><br><br>
 
-}
+<button onclick="analyzeEtsyImage('${item.image}','${item.link}')">
+Find AliExpress Match
+</button>
 
-if(item.matches){
+<hr>
 
-item.matches.forEach(m =>{
-
-html+=`
-<br>
-<a href="${m.url}" target="_blank">${m.url}</a>
-<br>
-Similarity: ${m.similarity}%
 `
-
-})
-
-}
-
-div.innerHTML=html
 
 container.appendChild(div)
 
 })
+
+}
+
+/* ========================= */
+/* DISPLAY MATCHES */
+/* ========================= */
+
+function displayMatches(etsyImage, etsyLink, matches){
+
+const container = document.getElementById("results")
+
+const div=document.createElement("div")
+
+div.className="result"
+
+let html=`
+
+<h3>Match Found</h3>
+
+Etsy Product<br>
+
+<img src="${etsyImage}" width="150"><br>
+
+<a href="${etsyLink}" target="_blank">View Etsy Listing</a>
+
+<br><br>
+
+`
+
+matches.forEach(m=>{
+
+if(m.similarity>=70){
+
+html+=`
+
+AliExpress Match (${m.similarity}%)
+
+<br>
+
+<img src="${m.image}" width="150"><br>
+
+<a href="${m.link}" target="_blank">
+View AliExpress Product
+</a>
+
+<br><br>
+
+`
+
+}
+
+})
+
+div.innerHTML=html
+
+container.appendChild(div)
 
 }
