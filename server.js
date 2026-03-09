@@ -1,6 +1,4 @@
-// server.js
 require("dotenv").config();
-
 const express = require("express");
 const multer = require("multer");
 const axios = require("axios");
@@ -11,51 +9,32 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
-// =======================
-// Middleware
-// =======================
 const upload = multer({ storage: multer.memoryStorage() });
-
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static("public"));
 
-// =======================
-// Socket logs
-// =======================
+/* ================= SOCKET LOG ================= */
 function sendLog(socket, message) {
   console.log(message);
-  if (socket) {
-    socket.emit("log", {
-      message,
-      time: new Date().toISOString()
-    });
-  }
+  if (socket) socket.emit("log", { message, time: new Date().toISOString() });
 }
 
-// =======================
-// Etsy search
-// =======================
+/* ================= ETSY SEARCH ================= */
 app.post("/search-etsy", async (req, res) => {
   const { keyword, limit } = req.body;
   if (!keyword) return res.status(400).json({ error: "Keyword required" });
-
   const maxItems = Math.min(parseInt(limit) || 10, 50);
 
   try {
     const etsyUrl = `https://www.etsy.com/search?q=${encodeURIComponent(keyword)}`;
     const response = await axios.get("https://api.scraperapi.com/", {
-      params: {
-        api_key: process.env.SCRAPAPI_KEY,
-        url: etsyUrl,
-        render: true
-      }
+      params: { api_key: process.env.SCRAPAPI_KEY, url: etsyUrl, render: true }
     });
-
     const html = response.data;
+
     const imageRegex = /https:\/\/i\.etsystatic\.com[^"]+/g;
     const linkRegex = /https:\/\/www\.etsy\.com\/listing\/\d+/g;
-
     const images = [...html.matchAll(imageRegex)].map(m => m[0]);
     const links = [...html.matchAll(linkRegex)].map(m => m[0]);
 
@@ -66,14 +45,12 @@ app.post("/search-etsy", async (req, res) => {
 
     res.json({ results });
   } catch (err) {
-    console.error("ScraperAPI error:", err.message);
+    console.error("ScraperAPI Error:", err.message);
     res.status(500).json({ error: "Scraping failed" });
   }
 });
 
-// =======================
-// OpenAI similarity
-// =======================
+/* ================= OPENAI SIMILARITY ================= */
 async function calculateSimilarity(imgA, imgB) {
   try {
     const response = await axios.post(
@@ -81,18 +58,18 @@ async function calculateSimilarity(imgA, imgB) {
       {
         model: "gpt-4o-mini",
         messages: [
-          { role: "user", content: [
-            { type: "text", text: "Return similarity score between 0 and 100." },
-            { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imgA}` } },
-            { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imgB}` } }
-          ]}
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "Return similarity score between 0 and 100." },
+              { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imgA}` } },
+              { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imgB}` } }
+            ]
+          }
         ]
       },
-      {
-        headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" }
-      }
+      { headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" } }
     );
-
     const text = response.data.choices[0].message.content;
     const match = text.match(/\d+/);
     return match ? parseInt(match[0]) : 0;
@@ -102,21 +79,18 @@ async function calculateSimilarity(imgA, imgB) {
   }
 }
 
-// =======================
-// Analyze images
-// =======================
+/* ================= IMAGE ANALYSIS ================= */
 app.post("/analyze-images", upload.array("images"), async (req, res) => {
   const socketId = req.body.socketId;
   const socket = io.sockets.sockets.get(socketId);
-
   const results = [];
 
   for (const file of req.files) {
     sendLog(socket, `Processing ${file.originalname}`);
     const base64 = file.buffer.toString("base64");
-
-    // 1️⃣ Upload to IMGBB
     let imageUrl;
+
+    // Upload to IMGBB
     try {
       const uploadRes = await axios.post(
         "https://api.imgbb.com/1/upload",
@@ -124,12 +98,12 @@ app.post("/analyze-images", upload.array("images"), async (req, res) => {
       );
       imageUrl = uploadRes.data.data.url;
       sendLog(socket, "Uploaded to IMGBB");
-    } catch {
+    } catch (err) {
       sendLog(socket, "IMGBB upload failed");
       continue;
     }
 
-    // 2️⃣ Search reverse image via Serper
+    // Search reverse image via Serper
     let serperResults = [];
     try {
       const response = await axios.post(
@@ -138,29 +112,26 @@ app.post("/analyze-images", upload.array("images"), async (req, res) => {
         { headers: { "X-API-KEY": process.env.SERPER_API_KEY } }
       );
       serperResults = response.data.images || [];
-      sendLog(socket, `Found ${serperResults.length} images`);
+      sendLog(socket, `${serperResults.length} results found`);
     } catch (err) {
-      sendLog(socket, `Serper failed: ${err.message}`);
+      sendLog(socket, "Serper failed");
     }
 
     const topResults = serperResults.slice(0, 5);
     const matches = [];
 
     for (const item of topResults) {
-      if (!item.link?.includes("aliexpress")) continue;
-
+      if (!item.link?.includes("aliexpress.com")) continue;
       let similarity = 0;
       try {
-        const aliexpressImgRes = await axios.get(item.imageUrl, { responseType: "arraybuffer" });
-        const base64B = Buffer.from(aliexpressImgRes.data).toString("base64");
+        const imgRes = await axios.get(item.thumbnail, { responseType: "arraybuffer" });
+        const base64B = Buffer.from(imgRes.data, "binary").toString("base64");
         similarity = await calculateSimilarity(base64, base64B);
       } catch (err) {
-        sendLog(socket, `Similarity check failed: ${err.message}`);
+        sendLog(socket, "Similarity check failed");
       }
-
-      matches.push({ url: item.link, image: item.imageUrl, similarity });
-
-      if (similarity >= 60) break; // stop at first high match
+      matches.push({ url: item.link, similarity, image: item.thumbnail });
+      if (similarity >= 60) break;
     }
 
     results.push({ image: imageUrl, matches });
@@ -169,16 +140,12 @@ app.post("/analyze-images", upload.array("images"), async (req, res) => {
   res.json({ results });
 });
 
-// =======================
-// Socket.io connection
-// =======================
-io.on("connection", (socket) => {
-  console.log("Client connected:", socket.id);
+/* ================= SOCKET.IO ================= */
+io.on("connection", socket => {
   socket.emit("connected", { socketId: socket.id });
+  console.log("🟢 Client connected");
 });
 
-// =======================
-// Start server
-// =======================
+/* ================= SERVER ================= */
 const PORT = process.env.PORT || 10000;
-server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+server.listen(PORT, () => console.log("🚀 Server running on port", PORT));
