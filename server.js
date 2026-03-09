@@ -5,6 +5,8 @@ import cors from "cors";
 import { Server } from "socket.io";
 import http from "http";
 import axios from "axios";
+import FormData from "form-data";
+import cheerio from "cheerio";
 
 const app = express();
 const server = http.createServer(app);
@@ -36,6 +38,23 @@ function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+// Upload image to ImgBB
+async function uploadToImgBB(imageUrl) {
+    try {
+        const form = new FormData();
+        form.append("image", imageUrl);
+        form.append("key", process.env.IMGBB_API_KEY);
+        const resp = await axios.post("https://api.imgbb.com/1/upload", form, {
+            headers: form.getHeaders()
+        });
+        return resp.data.data.url;
+    } catch (err) {
+        console.error("ImgBB upload failed:", err.message);
+        return null;
+    }
+}
+
+// Call OpenAI for similarity
 async function callOpenAIWithRetry(imageUrl, retries = 3, socket = null) {
     for (let i = 0; i < retries; i++) {
         try {
@@ -83,18 +102,21 @@ async function callOpenAIWithRetry(imageUrl, retries = 3, socket = null) {
 // Routes
 // ========================
 
-// Recherche Etsy
+// 1️⃣ Recherche Etsy
 app.post("/search-etsy", async (req, res) => {
-    const { keyword, limit = 5 } = req.body;
+    const { keyword, limit = 10 } = req.body;
     try {
-        // Simulation: ici tu appellerais l'API Etsy
+        const apiUrl = `http://api.scraperapi.com?api_key=${process.env.SCRAPER_API_KEY}&url=${encodeURIComponent(`https://www.etsy.com/search?q=${keyword}`)}`;
+        const resp = await axios.get(apiUrl);
+        const $ = cheerio.load(resp.data);
+
         const results = [];
-        for (let i = 1; i <= limit; i++) {
-            results.push({
-                etsyImage: `https://placekitten.com/200/${200 + i}`, 
-                etsyLink: `https://etsy.com/item/${keyword}-${i}`
-            });
-        }
+        $("li[data-search-result]").each((i, el) => {
+            if (i >= limit) return false;
+            const img = $(el).find("img").attr("src");
+            const link = $(el).find("a").attr("href");
+            if (img && link) results.push({ etsyImage: img, etsyLink: link });
+        });
         res.json({ results });
     } catch (err) {
         console.error(err);
@@ -102,31 +124,44 @@ app.post("/search-etsy", async (req, res) => {
     }
 });
 
-// Recherche Aliexpress avec AI Similarity
+// 2️⃣ Recherche inversée + AliExpress + OpenAI
 app.post("/find-aliexpress", async (req, res) => {
-    const { etsyImage, socketId } = req.body;
+    const { etsyImage, etsyLink, socketId } = req.body;
     const socket = io.sockets.sockets.get(socketId);
     const results = [];
 
     try {
-        // Simulation: ici tu appellerais l'API Aliexpress
-        const aliImages = [];
-        for (let i = 0; i < 5; i++) {
-            aliImages.push({
-                aliImage: `https://placekitten.com/100/${100 + i}`,
-                aliLink: `https://aliexpress.com/item/${i}`
-            });
-        }
+        // Upload Etsy image sur imgbb
+        const imgbbUrl = await uploadToImgBB(etsyImage);
+        if (!imgbbUrl) return res.status(500).json({ error: "Failed to upload Etsy image" });
 
-        // Analyse de similarité OpenAI avec throttling
-        for (const item of aliImages) {
+        sendLog(socket, `Uploaded Etsy image to ImgBB: ${imgbbUrl}`);
+
+        // Recherche inversée Google via Serper
+        const serperResp = await axios.get(`https://api.serper.dev/search?image_url=${encodeURIComponent(imgbbUrl)}&filter=aliexpress`, {
+            headers: { "X-API-KEY": process.env.SERPER_API_KEY }
+        });
+
+        // Récupérer 5 premières images + liens
+        const aliResults = serperResp.data.results.slice(0, 5).map(r => ({
+            aliImage: r.thumbnail || r.image,
+            aliLink: r.link
+        }));
+
+        // Comparaison OpenAI
+        for (const item of aliResults) {
             const similarity = await callOpenAIWithRetry(item.aliImage, 3, socket);
-            results.push({
-                aliImage: item.aliImage,
-                aliLink: item.aliLink,
-                similarity
-            });
-            await delay(500); // 0.5s entre chaque requête pour éviter le 429
+            if (similarity >= 60) {
+                results.push({
+                    etsyImage,
+                    etsyLink,
+                    aliImage: item.aliImage,
+                    aliLink: item.aliLink,
+                    similarity
+                });
+                break; // Arrêter dès qu'une image est similaire ≥ 60%
+            }
+            await delay(500);
         }
 
         res.json({ matches: results });
