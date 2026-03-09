@@ -1,17 +1,32 @@
 {
   "name": "etsy-aliexpress-finder",
   "version": "1.0.0",
-  "type": "module",
-  "description": "Find AliExpress products similar to Etsy items using image search and AI",
+  "description": "Find AliExpress equivalents for Etsy products with image similarity using OpenAI",
   "main": "server.js",
+  "type": "commonjs",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "dev": "nodemon server.js"
   },
+  "keywords": [
+    "etsy",
+    "aliexpress",
+    "image-search",
+    "openai",
+    "socket.io",
+    "scraper"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
   "dependencies": {
-    "axios": "^1.7.0",
+    "axios": "^1.6.0",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
+    "multer": "^1.4.5-lts.1",
     "socket.io": "^4.7.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
   },
   "engines": {
     "node": ">=18.0.0"
