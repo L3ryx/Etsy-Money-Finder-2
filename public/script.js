@@ -1,81 +1,84 @@
 const socket = io();
-let socketId = "";
 
-socket.on("connected", data => {
-  socketId = data.socketId;
-  log("Connected to server: " + socketId);
+// Logs en direct
+socket.on("log", (data) => {
+  const logsDiv = document.getElementById("logs");
+  logsDiv.innerHTML += `[${data.time}] ${data.message}<br>`;
+  logsDiv.scrollTop = logsDiv.scrollHeight;
 });
 
-socket.on("log", data => {
-  log(data.message);
+socket.on("connected", (data) => {
+  console.log("Connected with socketId:", data.socketId);
 });
 
-function log(msg) {
-  const logs = document.getElementById("logs");
-  logs.innerHTML += `<div>${msg}</div>`;
-  logs.scrollTop = logs.scrollHeight;
-}
+// Bouton Search
+document.getElementById("searchBtn").addEventListener("click", async () => {
+  const keyword = document.getElementById("keyword").value.trim();
+  const limit = document.getElementById("limit").value;
 
-async function search() {
-  const keyword = document.getElementById("keyword").value;
-  const limit = document.getElementById("limit").value || 10;
-
-  if (!keyword) return alert("Enter a keyword!");
+  if (!keyword) return alert("Please enter a keyword!");
 
   document.getElementById("results").innerHTML = "";
-  log("Searching Etsy...");
+  document.getElementById("logs").innerHTML = "Starting Etsy search...<br>";
 
-  const res = await fetch("/search-etsy", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ keyword, limit })
-  });
-  const data = await res.json();
+  try {
+    const res = await fetch("/search-etsy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ keyword, limit })
+    });
 
-  log(`Found ${data.results.length} Etsy results`);
-  if (!data.results.length) return;
+    const data = await res.json();
 
-  // Convert Etsy images to files for analysis
-  const formData = new FormData();
-  formData.append("socketId", socketId);
-  for (const item of data.results) {
-    const imgRes = await fetch(item.image);
-    const blob = await imgRes.blob();
-    formData.append("images", new File([blob], "etsy.jpg"));
-  }
+    if (!data.results || data.results.length === 0) {
+      document.getElementById("logs").innerHTML += "No Etsy results found.<br>";
+      return;
+    }
 
-  log("Starting image analysis...");
-  const analysisRes = await fetch("/analyze-images", {
-    method: "POST",
-    body: formData
-  });
-  const analysisData = await analysisRes.json();
-
-  displayResults(analysisData.results);
-}
-
-function displayResults(results) {
-  const container = document.getElementById("results");
-  container.innerHTML = "";
-  for (const r of results) {
-    const etsyImg = r.image;
-    for (const match of r.matches) {
+    // Affichage des résultats Etsy
+    for (const item of data.results) {
       const card = document.createElement("div");
       card.className = "result-card";
       card.innerHTML = `
         <div>
-          <a href="${etsyImg}" target="_blank">
-            <img src="${etsyImg}" />
+          <a href="${item.link}" target="_blank">
+            <img src="${item.image}" />
           </a>
         </div>
         <div>
-          <a href="${match.url}" target="_blank">
-            <img src="${match.image}" />
-          </a>
-          <div>Similarity: ${match.similarity}%</div>
+          <p><a href="${item.link}" target="_blank">${item.link}</a></p>
         </div>
       `;
-      container.appendChild(card);
+      document.getElementById("results").appendChild(card);
     }
+
+    document.getElementById("logs").innerHTML += `Found ${data.results.length} Etsy items.<br>`;
+
+    // Appel vers /analyze-images pour pipeline AliExpress
+    const formData = new FormData();
+    const socketId = socket.id;
+
+    data.results.forEach((item) => {
+      fetch(item.image)
+        .then(res => res.blob())
+        .then(blob => {
+          const file = new File([blob], "etsy.jpg", { type: blob.type });
+          formData.append("images", file);
+        })
+        .then(async () => {
+          formData.append("socketId", socketId);
+          const analysisRes = await fetch("/analyze-images", {
+            method: "POST",
+            body: formData
+          });
+          const analysisData = await analysisRes.json();
+          console.log("Analysis Data:", analysisData);
+          // Ici tu peux afficher les correspondances AliExpress similaires
+        });
+    });
+
+  } catch (err) {
+    console.error(err);
+    document.getElementById("logs").innerHTML += "Error: " + err.message + "<br>";
   }
-}
+});
