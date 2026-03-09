@@ -13,7 +13,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.static("public"));
 
 // ===========================================
-// SOCKET.IO CONNECTION
+// SOCKET.IO
 // ===========================================
 io.on("connection", (socket) => {
   console.log("🟢 Client connected");
@@ -21,7 +21,30 @@ io.on("connection", (socket) => {
 });
 
 // ===========================================
-// UTILS : SIMILARITY CHECK VIA OPENAI VISION
+// REVERSE IMAGE SEARCH
+// ===========================================
+async function searchAliExpressImages(imageUrl, limit = 5) {
+  try {
+    const response = await axios.post(
+      "https://google.serper.dev/images",
+      { q: "site:aliexpress.com", image_url: imageUrl, num: limit },
+      { headers: { "X-API-KEY": process.env.SERPER_API_KEY } }
+    );
+
+    if (!response.data?.images) return [];
+
+    return response.data.images.slice(0, limit).map(img => ({
+      image: img.thumbnail || img.link,
+      link: img.link
+    }));
+  } catch (err) {
+    console.error("Serper search error:", err.message);
+    return [];
+  }
+}
+
+// ===========================================
+// OPENAI IMAGE SIMILARITY
 // ===========================================
 async function checkSimilarity(imageA, imageB) {
   try {
@@ -40,15 +63,13 @@ async function checkSimilarity(imageA, imageB) {
           }
         ]
       },
-      {
-        headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` }
-      }
+      { headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` } }
     );
 
     const text = response.data.choices[0].message.content;
     const match = text.match(/\d+/);
     const score = match ? parseInt(match[0]) : 0;
-    console.log("Similarity score:", score);
+    console.log("Similarity score:", score, imageA, imageB);
     return score;
   } catch (err) {
     console.error("OpenAI Vision error:", err.message);
@@ -57,36 +78,15 @@ async function checkSimilarity(imageA, imageB) {
 }
 
 // ===========================================
-// REVERSE IMAGE SEARCH VIA SERPER
-// ===========================================
-async function searchAliExpressImages(imageUrl, limit = 5) {
-  try {
-    const response = await axios.post(
-      "https://google.serper.dev/images",
-      { q: "site:aliexpress.com", image_url: imageUrl, num: limit },
-      { headers: { "X-API-KEY": process.env.SERPER_API_KEY } }
-    );
-
-    return (response.data?.images || []).slice(0, limit).map(item => ({
-      image: item.thumbnail || item.link,
-      link: item.link
-    }));
-  } catch (err) {
-    console.error("Serper search error:", err.message);
-    return [];
-  }
-}
-
-// ===========================================
-// ANALYZE ROUTE : ETSY → ALIEXPRESS
+// ANALYZE ROUTE
 // ===========================================
 app.post("/analyze-etsy", async (req, res) => {
-  const { etsyImages } = req.body; // un tableau d'URLs d'images Etsy
+  const { etsyImages } = req.body;
   if (!etsyImages || !Array.isArray(etsyImages)) {
     return res.status(400).json({ error: "etsyImages must be an array of URLs" });
   }
 
-  const finalResults = [];
+  const results = [];
 
   for (let i = 0; i < etsyImages.length; i++) {
     const etsyImage = etsyImages[i];
@@ -97,9 +97,9 @@ app.post("/analyze-etsy", async (req, res) => {
     for (const ali of aliImages) {
       const score = await checkSimilarity(etsyImage, ali.image);
 
-      // ✅ Condition modifiée : garder les images avec similarité ≥ 40%
+      // ✅ garder uniquement les scores >= 40%
       if (score >= 40) {
-        finalResults.push({
+        results.push({
           etsyImage,
           aliImage: ali.image,
           aliLink: ali.link,
@@ -109,7 +109,11 @@ app.post("/analyze-etsy", async (req, res) => {
     }
   }
 
-  res.json({ results: finalResults });
+  if (results.length === 0) {
+    console.log("No results with similarity >= 40%");
+  }
+
+  res.json({ results });
 });
 
 // ===========================================
