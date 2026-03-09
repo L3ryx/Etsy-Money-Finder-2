@@ -1,37 +1,92 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html>
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Niche Finder</title>
-<link href="https://fonts.googleapis.com/css2?family=Croissant+One&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css">
+<title>AI Reverse Image Search</title>
+
+<style>
+
+body{
+font-family:Arial;
+background:#0f172a;
+color:white;
+text-align:center;
+padding:40px;
+}
+
+h1{
+margin-bottom:30px;
+}
+
+.upload-box{
+background:#1e293b;
+padding:30px;
+border-radius:10px;
+width:400px;
+margin:auto;
+}
+
+button{
+margin-top:20px;
+padding:12px 25px;
+background:#22c55e;
+border:none;
+color:white;
+font-size:16px;
+cursor:pointer;
+border-radius:6px;
+}
+
+button:hover{
+background:#16a34a;
+}
+
+#logs{
+margin-top:40px;
+background:#020617;
+padding:20px;
+border-radius:10px;
+height:200px;
+overflow:auto;
+text-align:left;
+}
+
+.result{
+background:#1e293b;
+padding:15px;
+margin-top:15px;
+border-radius:10px;
+}
+
+</style>
 </head>
+
 <body>
 
-<div class="container">
-  <h1 class="title">Niche Finder</h1>
+<h1>AI Image Search Tool</h1>
 
-  <div class="form-container">
-    <input type="text" class="input-field" placeholder="Keyword">
-    <select class="dropdown">
-      <option value="5">Analyse 5 annonces</option>
-      <option value="10">Analyse 10 annonces</option>
-      <option value="20">Analyse 20 annonces</option>
-      <option value="50">Analyse 50 annonces</option>
-    </select>
-    <button class="start-btn">START</button>
-  </div>
+<div class="upload-box">
+
+<input type="file" id="images" multiple>
+
+<br>
+
+<button onclick="startSearch()">
+Start Analysis
+</button>
+
 </div>
+
+<h2>Logs</h2>
+
+<div id="logs"></div>
+
+<h2>Results</h2>
 
 <div id="results"></div>
 
-<div id="loader" class="loader hidden">
-  <div class="spinner"></div>
-  <p>Recherche en cours...</p>
-</div>
-
 <script src="/socket.io/socket.io.js"></script>
 <script src="script.js"></script>
+
 </body>
 </html>
