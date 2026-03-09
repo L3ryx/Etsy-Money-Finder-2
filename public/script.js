@@ -5,56 +5,60 @@ const resultsContainer = document.getElementById("results");
 const startBtn = document.getElementById("startBtn");
 
 startBtn.addEventListener("click", async () => {
-    const keyword = document.getElementById("keyword").value;
-    const limit = document.getElementById("limit").value;
+  const keyword = document.getElementById("keyword").value;
+  const limit = document.getElementById("limit").value;
+  const files = document.getElementById("images").files;
 
-    if(!keyword){ alert("⚠️ Entre un keyword !"); return; }
+  if (!keyword && files.length === 0) return alert("⚠️ Entrez un keyword ou une image");
 
-    loader.classList.remove("hidden");
-    startBtn.disabled = true;
-    startBtn.innerText = "Loading...";
+  showLoader();
+  startBtn.disabled = true;
 
-    try{
-        const response = await fetch("/search-etsy", {
-            method:"POST",
-            headers:{"Content-Type":"application/json"},
-            body: JSON.stringify({keyword, limit, socketId: socket.id})
-        });
-        const data = await response.json();
-        resultsContainer.innerHTML = "";
+  let etsyResults = [];
+  if (keyword) {
+    const res = await fetch("/search-etsy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ keyword, limit })
+    });
+    const data = await res.json();
+    etsyResults = data.results || [];
+  }
 
-        for(const item of data.results){
-            const container = document.createElement("div");
-            container.className = "etsy-aliexpress-container";
+  let aliResults = [];
+  if (files.length > 0) {
+    const formData = new FormData();
+    for (const file of files) formData.append("images", file);
+    formData.append("socketId", socket.id);
 
-            // Etsy image
-            const etsyDiv = document.createElement("div");
-            etsyDiv.className = "etsy-image";
-            etsyDiv.innerHTML = `<img src="${item.image}" /><a href="${item.link}" target="_blank">Voir annonce Etsy</a>`;
+    const res = await fetch("/analyze-images", { method: "POST", body: formData });
+    const data = await res.json();
+    aliResults = data.results || [];
+  }
 
-            // AliExpress placeholder (sera rempli via ScraperAPI sur serveur)
-            const aliDiv = document.createElement("div");
-            aliDiv.className = "aliexpress-images";
+  resultsContainer.innerHTML = "";
 
-            if(item.aliexpress && item.aliexpress.length>0){
-                item.aliexpress.forEach(ali=>{
-                    const aliCard = document.createElement("div");
-                    aliCard.className = "ali-card";
-                    aliCard.innerHTML = `<img src="${ali.image}" /><a href="${ali.link}" target="_blank">Voir AliExpress</a>`;
-                    aliDiv.appendChild(aliCard);
-                });
-            }
+  // Affiche résultats Etsy
+  etsyResults.forEach(item => {
+    const card = document.createElement("div");
+    card.className = "result-card";
+    card.innerHTML = `<img src="${item.image}"><br><a href="${item.link}" target="_blank">Voir annonce Etsy</a>`;
+    resultsContainer.appendChild(card);
+  });
 
-            container.appendChild(etsyDiv);
-            container.appendChild(aliDiv);
-            resultsContainer.appendChild(container);
-        }
-    } catch(err){
-        console.error(err);
-        alert("Erreur serveur ❌");
-    }
+  // Affiche résultats AliExpress
+  aliResults.forEach(item => {
+    item.aliResults.forEach(a => {
+      const card = document.createElement("div");
+      card.className = "result-card";
+      card.innerHTML = `<img src="${a.image}"><br><a href="${a.link}" target="_blank">Voir annonce AliExpress</a>`;
+      resultsContainer.appendChild(card);
+    });
+  });
 
-    loader.classList.add("hidden");
-    startBtn.disabled = false;
-    startBtn.innerText = "START";
+  hideLoader();
+  startBtn.disabled = false;
 });
+
+function showLoader() { loader.classList.remove("hidden"); }
+function hideLoader() { loader.classList.add("hidden"); }
