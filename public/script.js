@@ -27,35 +27,47 @@ async function search() {
   });
   const data = await res.json();
 
-  for (const item of data.results) {
-    const div = document.createElement("div");
-    div.classList.add("result");
-    div.innerHTML = `
-      <img src="${item.etsyImage}" width="200">
-      <a href="${item.etsyLink}" target="_blank">Lien Etsy</a>
-      <div class="aliexpressMatches">Finding AliExpress matches...</div>
-    `;
-    resultsDiv.appendChild(div);
-
-    // Find AliExpress automatically
-    const matchRes = await fetch("/find-aliexpress", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ etsyImage: item.etsyImage, socketId })
-    });
-    const matchData = await matchRes.json();
-
-    const matchDiv = div.querySelector(".aliexpressMatches");
-    matchDiv.innerHTML = "";
-    for (const m of matchData.matches) {
-      matchDiv.innerHTML += `
-        <div style="display:flex;align-items:center;gap:10px;margin-top:5px;">
-          <img src="${m.aliImage}" width="100">
-          <a href="${m.aliLink}" target="_blank">Lien AliExpress (${Math.round(m.similarity*100)}%)</a>
-        </div>
+  // Lance toutes les recherches AliExpress en parallèle
+  await Promise.all(
+    data.results.map(async item => {
+      const div = document.createElement("div");
+      div.classList.add("result");
+      div.innerHTML = `
+        <img src="${item.etsyImage}" width="200">
+        <a href="${item.etsyLink}" target="_blank">Lien Etsy</a>
+        <div class="aliexpressMatches">Finding AliExpress matches...</div>
       `;
-    }
-  }
+      resultsDiv.appendChild(div);
+
+      try {
+        const matchRes = await fetch("/find-aliexpress", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ etsyImage: item.etsyImage, socketId })
+        });
+        const matchData = await matchRes.json();
+
+        const matchDiv = div.querySelector(".aliexpressMatches");
+        if (matchData.matches.length === 0) {
+          matchDiv.innerHTML = "No AliExpress match ≥ 70%";
+        } else {
+          matchDiv.innerHTML = "";
+          for (const m of matchData.matches) {
+            matchDiv.innerHTML += `
+              <div style="display:flex;align-items:center;gap:10px;margin-top:5px;">
+                <img src="${m.aliImage}" width="100">
+                <a href="${m.aliLink}" target="_blank">Lien AliExpress (${Math.round(m.similarity*100)}%)</a>
+              </div>
+            `;
+          }
+        }
+      } catch (err) {
+        const matchDiv = div.querySelector(".aliexpressMatches");
+        matchDiv.innerHTML = "Error finding AliExpress matches";
+        console.error(err);
+      }
+    })
+  );
 }
 
 function log(message) {
