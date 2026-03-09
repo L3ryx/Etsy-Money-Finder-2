@@ -1,46 +1,84 @@
-/* RESET & BODY */
-*{margin:0;padding:0;box-sizing:border-box;font-family:'Croissant One', cursive;}
-body{background:black;color:white;overflow-x:hidden;}
+#results{
+  width:100%;
+  max-width:1600px;
+  margin:60px auto;
+  display:flex;
+  flex-direction:column;
+  gap:40px;
+  padding:0 40px;
+}
 
-/* BACKGROUND */
-.gif-background{position:fixed;top:0;left:0;width:100%;height:100%;object-fit:cover;z-index:-3;}
+.result-card{
+  width:100%;
+  background:white;
+  color:black;
+  border-radius:20px;
+  padding:15px;
+  box-shadow:0 5px 20px rgba(0,0,0,0.2);
+}
 
-/* SMOKE */
-.smoke-container{position:fixed;bottom:0;left:0;width:100%;height:100%;pointer-events:none;z-index:-2;overflow:hidden;}
-.smoke{position:absolute;bottom:-200px;width:400px;height:400px;background:radial-gradient(circle, rgba(255,255,255,0.25) 0%, rgba(255,255,255,0) 70%);filter:blur(60px);animation:smokeFloat 15s infinite linear;}
-.smoke:nth-child(1){ left:10%; animation-delay:0s;}
-.smoke:nth-child(2){ left:50%; animation-delay:4s;}
-.smoke:nth-child(3){ left:80%; animation-delay:8s;}
-@keyframes smokeFloat{0%{transform:translateY(0) scale(1);opacity:0.4;}50%{transform:translateY(-300px) scale(1.5);opacity:0.2;}100%{transform:translateY(-800px) scale(2);opacity:0;}}
+/* Etsy image */
+.result-card .etsy{
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  margin-bottom:20px;
+}
 
-/* CONTAINER */
-.container{position:relative;z-index:1;min-height:100vh;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:35px;text-align:center;padding:40px 0;}
-.title{font-size:50px;font-weight:400;}
-.form-container{display:flex;flex-direction:column;gap:20px;align-items:center;}
-.input-field,.dropdown{width:280px;padding:14px;border-radius:15px;border:none;outline:none;font-size:15px;background:white;color:black;transition:0.3s ease;}
-.input-field:focus,.dropdown:focus{box-shadow:0 0 0 4px rgba(0,113,227,0.3);}
-.start-btn{background:#00ff66;color:black;border:none;padding:14px 40px;border-radius:30px;font-weight:bold;font-size:15px;cursor:pointer;transition:0.3s ease;}
-.start-btn:hover{transform:scale(1.08);box-shadow:0 0 20px #00ff66;}
-.start-btn:disabled{opacity:0.6;cursor:not-allowed;}
+.result-card .etsy img{
+  width:100%;
+  max-width:400px;
+  height:220px;
+  object-fit:cover;
+  border-radius:14px;
+}
 
-/* RESULTS GRID */
-#results{width:100%;max-width:1600px;margin:60px auto;display:flex;flex-direction:column;gap:40px;padding:0 40px;}
+.result-card .etsy a{
+  margin-top:10px;
+  text-decoration:none;
+  color:#0071e3;
+  font-weight:600;
+}
 
-/* ETSY + ALI CONTAINER */
-.etsy-aliexpress-container{display:flex;flex-wrap:wrap;justify-content:center;gap:30px;margin-bottom:40px;}
-.etsy-aliexpress-container .etsy-image,.etsy-aliexpress-container .aliexpress-images{display:flex;flex-direction:column;align-items:center;}
-.etsy-aliexpress-container .etsy-image img,.etsy-aliexpress-container .ali-card img{max-width:250px;max-height:250px;object-fit:cover;border-radius:14px;box-shadow:0 5px 15px rgba(0,0,0,0.3);}
-.aliexpress-images{display:flex;flex-wrap:wrap;gap:15px;justify-content:center;}
-.ali-card{display:flex;flex-direction:column;align-items:center;width:250px;text-align:center;}
-.ali-card a{margin-top:8px;text-decoration:none;color:#0071e3;font-weight:600;}
+/* AliExpress container */
+.aliexpress-container{
+  display:flex;
+  flex-wrap:wrap;
+  gap:15px;
+  justify-content:center;
+}
 
-/* RESPONSIVE */
-@media(max-width:1024px){.etsy-aliexpress-container{flex-direction:column;align-items:center;}}
-@media(max-width:768px){#results{padding:0 10px;}.ali-card{width:100%;}}
-@media(max-width:480px){.ali-card{width:100%;}}
+.aliexpress-card{
+  width:120px;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+}
 
-/* LOADER */
-.loader{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);display:flex;flex-direction:column;justify-content:center;align-items:center;z-index:9999;backdrop-filter:blur(6px);}
-.loader.hidden{display:none;}
-.spinner{width:60px;height:60px;border:6px solid rgba(255,255,255,0.3);border-top:6px solid #00ff66;border-radius:50%;animation:spin 1s linear infinite;margin-bottom:15px;}
-@keyframes spin{from{transform:rotate(0deg);}to{transform:rotate(360deg);}}
+.aliexpress-card img{
+  width:100%;
+  height:100px;
+  object-fit:cover;
+  border-radius:10px;
+}
+
+.aliexpress-card a{
+  margin-top:5px;
+  font-size:12px;
+  text-decoration:none;
+  color:#0071e3;
+  text-align:center;
+}
+
+/* Mobile responsive */
+@media(max-width:768px){
+  .aliexpress-card{
+    width:45%;
+  }
+}
+
+@media(max-width:480px){
+  .aliexpress-card{
+    width:90%;
+  }
+}
