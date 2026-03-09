@@ -1,75 +1,84 @@
-const searchBtn = document.getElementById("searchBtn");
-const keywordInput = document.getElementById("keyword");
-const resultsDiv = document.getElementById("results");
-const statusP = document.getElementById("status");
+const socket = io();
+let socketId = null;
 
-searchBtn.addEventListener("click", async () => {
-  const keyword = keywordInput.value.trim();
+socket.on("connected", data => {
+  socketId = data.socketId;
+  log("🟢 Connected to server with socketId: " + socketId);
+});
+
+socket.on("log", data => {
+  log(data.message);
+});
+
+function log(message) {
+  const logsDiv = document.getElementById("logs");
+  logsDiv.innerHTML += `<div>${message}</div>`;
+  logsDiv.scrollTop = logsDiv.scrollHeight;
+}
+
+async function search() {
+  const keyword = document.getElementById("keyword").value.trim();
+  const limit = document.getElementById("limit").value;
+
   if (!keyword) return alert("Enter a keyword");
 
-  resultsDiv.innerHTML = "";
-  statusP.textContent = "Fetching Etsy images...";
+  document.getElementById("results").innerHTML = "";
+  log("🔍 Searching Etsy for keyword: " + keyword);
 
   try {
-    // Étape 1 : récupérer les images Etsy via notre serveur
+    // 1️⃣ Search Etsy
     const etsyRes = await fetch("/search-etsy", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ keyword, limit: 5 })
+      body: JSON.stringify({ keyword, limit })
     });
     const etsyData = await etsyRes.json();
 
-    if (!etsyData.results || etsyData.results.length === 0) {
-      statusP.textContent = "No Etsy images found";
+    if (!etsyData.results || !etsyData.results.length) {
+      log("❌ No Etsy images found");
       return;
     }
 
-    statusP.textContent = "Checking AliExpress for similar products...";
+    // 2️⃣ Analyze Etsy images → get AliExpress matches
+    const analyzeRes = await fetch("/analyze-etsy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ etsyResults: etsyData.results, socketId })
+    });
 
-    // Étape 2 : pour chaque image Etsy, recherche inversée et comparaison
-    const allResults = [];
-    for (const etsyItem of etsyData.results) {
-      const analyzeRes = await fetch("/analyze-etsy", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ etsyImages: [etsyItem.image] })
-      });
-      const analyzeData = await analyzeRes.json();
-      allResults.push(...analyzeData.results);
-    }
+    const analyzeData = await analyzeRes.json();
 
-    statusP.textContent = "";
-
-    if (allResults.length === 0) {
-      resultsDiv.innerHTML = "<p>No results with similarity ≥ 40%</p>";
+    if (!analyzeData.results || !analyzeData.results.length) {
+      log("❌ No AliExpress matches with similarity ≥ 40%");
       return;
     }
 
-    // Étape 3 : afficher les résultats
-    for (const item of allResults) {
+    log(`✅ Found ${analyzeData.results.length} matches`);
+
+    // 3️⃣ Display results
+    const resultsDiv = document.getElementById("results");
+    analyzeData.results.forEach(item => {
       const div = document.createElement("div");
-      div.classList.add("result");
+      div.className = "result-card";
 
-      const etsyImg = document.createElement("img");
-      etsyImg.src = item.etsyImage;
-      const aliImg = document.createElement("img");
-      aliImg.src = item.aliImage;
-
-      const info = document.createElement("div");
-      info.innerHTML = `
-        <p>Similarity: ${item.similarity}%</p>
-        <p><a href="${item.aliLink}" target="_blank">AliExpress Link</a></p>
+      div.innerHTML = `
+        <div>
+          <a href="${item.etsyLink}" target="_blank">
+            <img src="${item.etsyImage}" alt="Etsy">
+          </a>
+          <p>Etsy Link</p>
+        </div>
+        <div>
+          <a href="${item.aliLink}" target="_blank">
+            <img src="${item.aliImage}" alt="AliExpress">
+          </a>
+          <p>AliExpress Link | Similarity: ${item.similarity}%</p>
+        </div>
       `;
-
-      div.appendChild(etsyImg);
-      div.appendChild(aliImg);
-      div.appendChild(info);
-
       resultsDiv.appendChild(div);
-    }
+    });
 
   } catch (err) {
-    console.error(err);
-    statusP.textContent = "Error occurred";
+    log("❌ Error occurred: " + err.message);
   }
-});
+}
