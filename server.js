@@ -1,9 +1,11 @@
-require("dotenv").config();
-const express = require("express");
-const axios = require("axios");
-const http = require("http");
-const { Server } = require("socket.io");
-const qs = require("qs");
+// server.js
+import dotenv from "dotenv";
+dotenv.config();
+
+import express from "express";
+import axios from "axios";
+import http from "http";
+import { Server } from "socket.io";
 
 const app = express();
 const server = http.createServer(app);
@@ -13,64 +15,79 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static("public"));
 
+// ================= SOCKET LOG SYSTEM =================
 function sendLog(socket, message) {
   console.log(message);
-  if (socket) socket.emit("log", { message, time: new Date().toISOString() });
+  if (socket) {
+    socket.emit("log", { message, time: new Date().toISOString() });
+  }
 }
 
-/* ===================================================== */
-/* 🔎 SEARCH ETSY + REVERSE IMAGE GOOGLE → FILTER ALIEXPRESS */
+// ================= SEARCH ETSY + REVERSE IMAGE =================
 app.post("/search-etsy", async (req, res) => {
-  const { keyword, limit } = req.body;
+  const { keyword, limit, socketId } = req.body;
+  const socket = io.sockets.sockets.get(socketId);
+
   if (!keyword) return res.status(400).json({ error: "Keyword required" });
 
   const maxItems = Math.min(parseInt(limit) || 10, 50);
 
   try {
-    // 🔹 Récupérer les annonces Etsy
+    sendLog(socket, `Searching Etsy for: ${keyword}`);
+
     const etsyUrl = `https://www.etsy.com/search?q=${encodeURIComponent(keyword)}`;
     const scraperRes = await axios.get("https://api.scraperapi.com/", {
-      params: { api_key: process.env.SCRAPAPI_KEY, url: etsyUrl, render: true },
+      params: {
+        api_key: process.env.SCRAPAPI_KEY,
+        url: etsyUrl,
+        render: true
+      }
     });
 
     const html = scraperRes.data;
+
     const imageRegex = /https:\/\/i\.etsystatic\.com[^"]+/g;
     const linkRegex = /https:\/\/www\.etsy\.com\/listing\/\d+/g;
-    const etsyImages = [...html.matchAll(imageRegex)].map((m) => m[0]);
-    const etsyLinks = [...html.matchAll(linkRegex)].map((m) => m[0]);
+
+    const images = [...(html.match(imageRegex) || [])].slice(0, maxItems);
+    const links = [...(html.match(linkRegex) || [])].slice(0, maxItems);
 
     const results = [];
 
-    for (let i = 0; i < Math.min(maxItems, etsyImages.length); i++) {
-      const etsyImage = etsyImages[i];
-      const etsyLink = etsyLinks[i] || etsyUrl;
+    for (let i = 0; i < images.length; i++) {
+      const etsyImage = images[i];
+      const etsyLink = links[i] || etsyUrl;
 
-      // 🔹 Reverse image Google
-      const googleUrl = `https://www.google.com/searchbyimage?image_url=${encodeURIComponent(etsyImage)}&encoded_image=&image_content=&filename=&hl=en`;
+      sendLog(socket, `Reverse searching for image ${i + 1}`);
 
-      const googleRes = await axios.get("https://api.scraperapi.com/", {
-        params: { api_key: process.env.SCRAPAPI_KEY, url: googleUrl, render: true },
-      });
+      let aliexpressResults = [];
 
-      const googleHtml = googleRes.data;
+      try {
+        const reverseSearchRes = await axios.get("https://api.scraperapi.com/", {
+          params: {
+            api_key: process.env.SCRAPAPI_KEY,
+            url: `https://www.google.com/searchbyimage?&image_url=${encodeURIComponent(etsyImage)}`,
+            render: true
+          }
+        });
 
-      // 🔹 Filtrer AliExpress
-      const aliLinkRegex = /https?:\/\/(www\.)?aliexpress\.com\/item\/[^\s"']+/g;
-      const aliImgRegex = /<img[^>]+src="([^">]+)"/g;
+        const htmlRS = reverseSearchRes.data;
 
-      const aliLinks = [...googleHtml.matchAll(aliLinkRegex)].map((m) => m[0]);
-      const aliImages = [...googleHtml.matchAll(aliImgRegex)].map((m) => m[1]);
+        const aliexpressRegex = /https:\/\/www\.aliexpress\.com\/item\/\d+/g;
+        const imgRegex = /<img[^>]+src="(https:\/\/[^">]+)"/g;
 
-      // Prendre les 5 premiers
-      const aliResults = [];
-      for (let j = 0; j < Math.min(5, aliLinks.length); j++) {
-        aliResults.push({ image: aliImages[j] || aliLinks[j], link: aliLinks[j] });
+        const alilinks = [...htmlRS.matchAll(aliexpressRegex)].map(m => m[0]).slice(0, 5);
+        const aliimages = [...htmlRS.matchAll(imgRegex)].map(m => m[1]).slice(0, 5);
+
+        aliexpressResults = alilinks.map((link, idx) => ({
+          link,
+          image: aliimages[idx] || link
+        }));
+      } catch (err) {
+        sendLog(socket, `Reverse image search failed for image ${i + 1}`);
       }
 
-      results.push({
-        etsy: { image: etsyImage, link: etsyLink },
-        aliexpress: aliResults,
-      });
+      results.push({ etsyImage, etsyLink, aliexpress: aliexpressResults });
     }
 
     res.json({ results });
@@ -80,14 +97,14 @@ app.post("/search-etsy", async (req, res) => {
   }
 });
 
-/* ===================================================== */
-/* SOCKET */
+// ================= SOCKET CONNECTION =================
 io.on("connection", (socket) => {
-  socket.emit("connected", { socketId: socket.id });
   console.log("🟢 Client connected");
+  socket.emit("connected", { socketId: socket.id });
 });
 
-/* ===================================================== */
-/* SERVER START */
+// ================= SERVER START =================
 const PORT = process.env.PORT || 10000;
-server.listen(PORT, () => console.log("🚀 Server running on port", PORT));
+server.listen(PORT, () => {
+  console.log("🚀 Server running on port", PORT);
+});
