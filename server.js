@@ -1,61 +1,47 @@
+// server.js
 require("dotenv").config();
-const express = require("express");
-const axios = require("axios");
-const http = require("http");
-const { Server } = require("socket.io");
+import express from "express";
+import multer from "multer";
+import axios from "axios";
+import http from "http";
+import { Server } from "socket.io";
+import FormData from "form-data";
+import fetch from "node-fetch";
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
+const upload = multer({ storage: multer.memoryStorage() });
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static("public"));
 
+// ==========================
+// LOG SYSTEM
+// ==========================
 function sendLog(socket, message, type = "info") {
   console.log(`[${type}] ${message}`);
-  if (socket) socket.emit("log", { message, type, time: new Date().toISOString() });
-}
-
-// Calcul similarity avec OpenAI
-async function calculateSimilarity(base64A, base64B) {
-  try {
-    const response = await axios.post(
-      "https://api.openai.com/v1/chat/completions",
-      {
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "user",
-            content: [
-              { type: "text", text: "Return only similarity 0 to 1." },
-              { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64A}` } },
-              { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64B}` } }
-            ]
-          }
-        ]
-      },
-      { headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` } }
-    );
-
-    const text = response.data.choices[0].message.content;
-    const match = text.match(/0\.\d+|1(\.0+)?/);
-    return match ? parseFloat(match[0]) : 0;
-  } catch (err) {
-    console.error("Similarity error:", err.message);
-    return 0;
+  if (socket) {
+    socket.emit("log", { message, type, time: new Date().toISOString() });
   }
 }
 
-// Recherche Etsy
+// ==========================
+// ETSY SEARCH
+// ==========================
 app.post("/search-etsy", async (req, res) => {
   const { keyword, limit } = req.body;
+  if (!keyword) return res.status(400).json({ error: "Keyword required" });
+
+  const maxItems = Math.min(parseInt(limit) || 10, 50);
   try {
     const etsyUrl = `https://www.etsy.com/search?q=${encodeURIComponent(keyword)}`;
-    const scraperRes = await axios.get("https://api.scraperapi.com/", {
+    const scraperResponse = await axios.get("https://api.scraperapi.com/", {
       params: { api_key: process.env.SCRAPAPI_KEY, url: etsyUrl, render: true }
     });
-    const html = scraperRes.data;
+    const html = scraperResponse.data;
 
     const imageRegex = /https:\/\/i\.etsystatic\.com[^"]+/g;
     const linkRegex = /https:\/\/www\.etsy\.com\/listing\/\d+/g;
@@ -63,67 +49,105 @@ app.post("/search-etsy", async (req, res) => {
     const images = [...html.matchAll(imageRegex)].map(m => m[0]);
     const links = [...html.matchAll(linkRegex)].map(m => m[0]);
 
-    const results = images.slice(0, Math.min(limit || 10, 50)).map((img, i) => ({
-      etsyImage: img,
-      etsyLink: links[i] || etsyUrl
-    }));
-
+    const results = [];
+    for (let i = 0; i < Math.min(maxItems, images.length); i++) {
+      results.push({ etsyImage: images[i], etsyLink: links[i] || etsyUrl });
+    }
     res.json({ results });
   } catch (err) {
-    console.error("Etsy scraping error:", err.message);
-    res.status(500).json({ error: "Etsy scraping failed" });
+    console.error("ScraperAPI Error:", err.message);
+    res.status(500).json({ error: "Scraping failed" });
   }
 });
 
-// Recherche et comparaison automatique AliExpress
+// ==========================
+// CALCULATE SIMILARITY
+// ==========================
+async function calculateSimilarity(base64A, base64B) {
+  const response = await axios.post(
+    "https://api.openai.com/v1/chat/completions",
+    {
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "Return only similarity 0 to 1." },
+            { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64A}` } },
+            { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64B}` } }
+          ]
+        }
+      ]
+    },
+    { headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` } }
+  );
+  const text = response.data.choices[0].message.content;
+  const match = text.match(/0\.\d+|1(\.0+)?/);
+  return match ? parseFloat(match[0]) : 0;
+}
+
+// ==========================
+// FIND ALIEXPRESS
+// ==========================
 app.post("/find-aliexpress", async (req, res) => {
   const { etsyImage, socketId } = req.body;
   const socket = io.sockets.sockets.get(socketId);
-  sendLog(socket, "🔎 Processing Etsy image");
+
+  sendLog(socket, "🔎 Searching AliExpress matches");
 
   try {
-    const serperRes = await axios.get("https://google.serper.dev/images", {
-      params: { engine: "google_reverse_image", image_url: etsyImage },
-      headers: { "X-API-KEY": process.env.SERPER_API_KEY }
+    const response = await axios.get("https://google.serper.dev/images", {
+      params: {
+        engine: "google_reverse_image",
+        image_url: etsyImage,
+        "X-API-KEY": process.env.SERPER_API_KEY
+      }
     });
 
-    let aliResults = serperRes.data.image_results
-      .filter(r => r.link?.includes("aliexpress.com"))
-      .slice(0, 5); // Top 5
+    const serperResults = response.data?.image_results || [];
+    const aliexpressResults = serperResults.filter(r => r.link?.includes("aliexpress.com")).slice(0, 5);
 
-    const etsyBase64Res = await axios.get(etsyImage, { responseType: "arraybuffer" });
-    const etsyBase64 = Buffer.from(etsyBase64Res.data, "binary").toString("base64");
+    const matches = [];
+    for (const item of aliexpressResults) {
+      try {
+        // Récupérer l'image AliExpress en base64
+        const imgRes = await axios.get(item.thumbnail, { responseType: "arraybuffer" });
+        const base64Ali = Buffer.from(imgRes.data, "binary").toString("base64");
 
-    // Compare toutes les images en parallèle
-    const matches = await Promise.all(
-      aliResults.map(async item => {
-        const imageUrl = item.thumbnail || item.image;
-        if (!imageUrl) return null;
+        // Calculer la similarité
+        const similarity = await calculateSimilarity(etsyImage, base64Ali);
 
-        try {
-          const aliRes = await axios.get(imageUrl, { responseType: "arraybuffer" });
-          const aliBase64 = Buffer.from(aliRes.data, "binary").toString("base64");
-          const similarity = await calculateSimilarity(etsyBase64, aliBase64);
-          if (similarity >= 0.7) {
-            return { aliImage: imageUrl, aliLink: item.link, similarity };
-          }
-        } catch {
-          return null;
+        if (similarity >= 0.7) {
+          matches.push({
+            aliImage: item.thumbnail,
+            aliLink: item.link,
+            similarity
+          });
         }
-        return null;
-      })
-    );
+      } catch (err) {
+        console.log("Error processing AliExpress image", err.message);
+      }
+    }
 
-    res.json({ etsyImage, matches: matches.filter(m => m) });
+    res.json({ matches });
+    sendLog(socket, `✅ Found ${matches.length} AliExpress matches`);
   } catch (err) {
-    console.error("AliExpress matching error:", err.message);
-    res.status(500).json({ error: "AliExpress matching failed" });
+    console.error(err);
+    res.status(500).json({ matches: [] });
+    sendLog(socket, "❌ Error finding AliExpress matches", "error");
   }
 });
 
+// ==========================
+// SOCKET
+// ==========================
 io.on("connection", socket => {
-  console.log("🟢 Client connected");
   socket.emit("connected", { socketId: socket.id });
+  console.log("🟢 Client connected");
 });
 
-server.listen(process.env.PORT || 3000, () => console.log("🚀 Server running"));
+// ==========================
+// START SERVER
+// ==========================
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
