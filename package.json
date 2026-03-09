@@ -1,6 +1,7 @@
 {
   "name": "etsy-aliexpress-finder",
   "version": "1.0.0",
+  "type": "module",
   "description": "Find AliExpress products similar to Etsy items using image search and AI",
   "main": "server.js",
   "scripts": {
