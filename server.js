@@ -96,7 +96,7 @@ async function calculateSimilarity(base64A, base64B) {
 }
 
 // ========================
-// 🧠 IMAGE ANALYSIS PIPELINE
+// 🧠 IMAGE ANALYSIS PIPELINE (ScrapAPI instead of Serper)
 // ========================
 app.post("/analyze-images", upload.array("images"), async (req, res) => {
   const socketId = req.body.socketId;
@@ -122,22 +122,28 @@ app.post("/analyze-images", upload.array("images"), async (req, res) => {
       continue;
     }
 
-    // 2️⃣ Reverse image search Serper
-    let serperResults = [];
+    // 2️⃣ Reverse image search via ScrapAPI
+    let scrapResults = [];
     try {
-      const serperResp = await axios.post(
-        "https://google.serper.dev/images",
-        { imageUrl },
-        { headers: { "X-API-KEY": process.env.SERPER_API_KEY } }
-      );
-      serperResults = serperResp.data.images || [];
-      sendLog(socket, `🔎 Serper returned ${serperResults.length} images`);
+      const scrapResp = await axios.get("https://api.scraperapi.com/", {
+        params: {
+          api_key: process.env.SCRAPAPI_KEY,
+          url: `https://www.google.com/searchbyimage?image_url=${encodeURIComponent(imageUrl)}`,
+          render: true
+        }
+      });
+
+      const html = scrapResp.data;
+      const linkRegex = /https?:\/\/[^\s'"]+/g; // simple regex pour tous les liens
+      scrapResults = [...html.matchAll(linkRegex)].map((m) => ({ link: m[0], thumbnail: imageUrl }));
+
+      sendLog(socket, `🔎 ScrapAPI returned ${scrapResults.length} links`);
     } catch (err) {
-      sendLog(socket, `❌ Serper failed: ${err.message}`, "error");
+      sendLog(socket, `❌ ScrapAPI image search failed: ${err.message}`, "error");
     }
 
     // 3️⃣ Filter AliExpress + similarity
-    const topResults = serperResults.slice(0, 5);
+    const topResults = scrapResults.slice(0, 5);
     const matches = [];
 
     for (const item of topResults) {
