@@ -1,120 +1,112 @@
-// script.js
 const socket = io();
+
 let socketId = null;
 
 socket.on("connected", (data) => {
   socketId = data.socketId;
-  console.log("Connected with socketId:", socketId);
 });
 
 socket.on("log", (data) => {
-  const logsDiv = document.getElementById("logs");
-  const p = document.createElement("p");
-  p.textContent = `[${data.type}] ${data.message}`;
-  logsDiv.appendChild(p);
-  logsDiv.scrollTop = logsDiv.scrollHeight;
+  const logBox = document.getElementById("logs");
+  logBox.innerHTML += `<div>${data.message}</div>`;
+  logBox.scrollTop = logBox.scrollHeight;
 });
 
-async function search() {
+/* ===================================================== */
+/* SEARCH ETSY */
+/* ===================================================== */
+
+async function searchEtsy() {
+
   const keyword = document.getElementById("keyword").value;
-  const limit = document.getElementById("limit").value;
 
-  if (!keyword) return alert("Please enter a keyword");
+  const response = await fetch("/search-etsy", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      keyword,
+      limit: 10
+    })
+  });
 
-  const resultsDiv = document.getElementById("results");
-  resultsDiv.innerHTML = "<p>Loading...</p>";
+  const data = await response.json();
 
-  try {
-    const res = await fetch("/search-etsy", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ keyword, limit })
-    });
+  const resultsDiv = document.getElementById("etsy-results");
+  resultsDiv.innerHTML = "";
 
-    const data = await res.json();
-    resultsDiv.innerHTML = "";
+  data.results.forEach(item => {
 
-    for (const item of data.results) {
-      // créer un conteneur pour chaque résultat
-      const container = document.createElement("div");
-      container.className = "result";
+    const div = document.createElement("div");
 
-      const etsyImg = document.createElement("img");
-      etsyImg.src = item.image;
-      container.appendChild(etsyImg);
+    div.innerHTML = `
+      <img src="${item.image}" width="120"/>
+      <a href="${item.link}" target="_blank">Etsy Link</a>
+    `;
 
-      const etsyLink = document.createElement("a");
-      etsyLink.href = item.link;
-      etsyLink.target = "_blank";
-      etsyLink.textContent = "View on Etsy";
-      container.appendChild(etsyLink);
+    resultsDiv.appendChild(div);
 
-      // bouton pour analyser l'image
-      const analyzeBtn = document.createElement("button");
-      analyzeBtn.textContent = "Find AliExpress";
-      analyzeBtn.onclick = () => analyzeImage(item.image, container);
-      container.appendChild(analyzeBtn);
+  });
 
-      resultsDiv.appendChild(container);
-    }
-  } catch (err) {
-    console.error(err);
-    resultsDiv.innerHTML = "<p>Error fetching Etsy results</p>";
-  }
 }
 
-async function analyzeImage(imageUrl, container) {
-  const resultsDiv = document.createElement("div");
-  resultsDiv.innerHTML = "<p>Finding AliExpress matches...</p>";
-  container.appendChild(resultsDiv);
+/* ===================================================== */
+/* ANALYZE IMAGES */
+/* ===================================================== */
 
-  try {
-    // fetch image as blob to send to /analyze-images
-    const imgRes = await fetch(imageUrl);
-    const blob = await imgRes.blob();
-    const file = new File([blob], "etsy.jpg", { type: "image/jpeg" });
+async function analyzeImages() {
 
-    const formData = new FormData();
-    formData.append("socketId", socketId);
-    formData.append("images", file);
+  const images = document.querySelectorAll("#etsy-results img");
 
-    const res = await fetch("/analyze-images", {
-      method: "POST",
-      body: formData
+  const formData = new FormData();
+
+  formData.append("socketId", socketId);
+
+  for (const img of images) {
+
+    const response = await fetch(img.src);
+    const blob = await response.blob();
+
+    formData.append("images", blob, "etsy.jpg");
+
+  }
+
+  const response = await fetch("/analyze-images", {
+    method: "POST",
+    body: formData
+  });
+
+  const data = await response.json();
+
+  const resultDiv = document.getElementById("results");
+  resultDiv.innerHTML = "";
+
+  data.results.forEach(product => {
+
+    const container = document.createElement("div");
+
+    container.innerHTML = `
+      <h3>Etsy Image</h3>
+      <img src="${product.image}" width="150">
+    `;
+
+    product.matches.forEach(match => {
+
+      const div = document.createElement("div");
+
+      div.innerHTML = `
+        <img src="${match.image}" width="120">
+        <a href="${match.url}" target="_blank">AliExpress</a>
+        <p>Similarity: ${match.similarity}%</p>
+      `;
+
+      container.appendChild(div);
+
     });
 
-    const data = await res.json();
-    resultsDiv.innerHTML = "";
+    resultDiv.appendChild(container);
 
-    const itemResults = data.results[0]?.matches || [];
+  });
 
-    if (!itemResults.length) {
-      resultsDiv.innerHTML = "<p>No matches found</p>";
-      return;
-    }
-
-    for (const match of itemResults) {
-      const matchDiv = document.createElement("div");
-      matchDiv.style.display = "flex";
-      matchDiv.style.alignItems = "center";
-      matchDiv.style.marginTop = "10px";
-
-      const img = document.createElement("img");
-      img.src = match.image;
-      img.style.width = "100px";
-      img.style.marginRight = "10px";
-
-      const link = document.createElement("a");
-      link.href = match.url;
-      link.target = "_blank";
-      link.textContent = `AliExpress - similarity: ${match.similarity}`;
-
-      matchDiv.appendChild(img);
-      matchDiv.appendChild(link);
-      resultsDiv.appendChild(matchDiv);
-    }
-  } catch (err) {
-    console.error(err);
-    resultsDiv.innerHTML = "<p>Error finding AliExpress matches</p>";
-  }
 }
