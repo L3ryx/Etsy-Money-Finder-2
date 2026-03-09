@@ -12,113 +12,109 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static("public"));
 
-// ===============================
-// SOCKET.IO
-// ===============================
+// ===========================================
+// SOCKET.IO CONNECTION
+// ===========================================
 io.on("connection", (socket) => {
   console.log("🟢 Client connected");
   socket.emit("connected", { socketId: socket.id });
 });
 
-// ===============================
-// REVERSE IMAGE SEARCH + COMPARISON
-// ===============================
-app.post("/analyze-etsy", async (req, res) => {
-  const { keyword } = req.body;
-
-  if (!keyword) return res.status(400).json({ error: "Keyword required" });
-
+// ===========================================
+// UTILS : SIMILARITY CHECK VIA OPENAI VISION
+// ===========================================
+async function checkSimilarity(imageA, imageB) {
   try {
-    // 1️⃣ Scraper Etsy
-    const etsyUrl = `https://www.etsy.com/search?q=${encodeURIComponent(keyword)}`;
-    const scraperRes = await axios.get("https://api.scraperapi.com/", {
-      params: {
-        api_key: process.env.SCRAPAPI_KEY,
-        url: etsyUrl,
-        render: true,
-      },
-    });
-
-    const html = scraperRes.data;
-
-    const imageRegex = /https:\/\/i\.etsystatic\.com[^"]+/g;
-    const linkRegex = /https:\/\/www\.etsy\.com\/listing\/\d+/g;
-
-    const etsyImages = [...html.matchAll(imageRegex)].map(m => m[0]);
-    const etsyLinks = [...html.matchAll(linkRegex)].map(m => m[0]);
-
-    const results = [];
-
-    // Boucle sur les images Etsy
-    for (let i = 0; i < Math.min(etsyImages.length, 10); i++) {
-      const etsyImage = etsyImages[i];
-      const etsyLink = etsyLinks[i] || etsyUrl;
-
-      console.log(`🔎 Searching AliExpress images for Etsy image ${i + 1}`);
-
-      // 2️⃣ Recherche inversée Google via Serper
-      const reverseRes = await axios.post(
-        "https://google.serper.dev/images",
-        { q: "site:aliexpress.com", image_url: etsyImage, num: 5 },
-        { headers: { "X-API-KEY": process.env.SERPER_API_KEY } }
-      );
-
-      const aliexpressImages = (reverseRes.data?.images || []).slice(0, 5);
-
-      const matches = [];
-
-      // 3️⃣ Comparaison OpenAI Vision
-      for (const item of aliexpressImages) {
-        const aiRes = await axios.post(
-          "https://api.openai.com/v1/chat/completions",
+    const response = await axios.post(
+      "https://api.openai.com/v1/chat/completions",
+      {
+        model: "gpt-4o-mini",
+        messages: [
           {
-            model: "gpt-4o-mini",
-            messages: [
-              {
-                role: "user",
-                content: [
-                  { type: "text", text: "Return similarity score between 0 and 100." },
-                  { type: "image_url", image_url: { url: etsyImage } },
-                  { type: "image_url", image_url: { url: item.thumbnail || item.link } },
-                ],
-              },
-            ],
-          },
-          { headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` } }
-        );
-
-        const score = parseInt(aiRes.data.choices[0].message.content.match(/\d+/)?.[0] || "0");
-        console.log("Similarity score:", score);
-
-        if (score >= 70) {
-          matches.push({
-            aliexpressImage: item.thumbnail || item.link,
-            aliexpressLink: item.link,
-            similarity: score,
-          });
-        }
+            role: "user",
+            content: [
+              { type: "text", text: "Return only similarity score between 0 and 100." },
+              { type: "image_url", image_url: { url: imageA } },
+              { type: "image_url", image_url: { url: imageB } }
+            ]
+          }
+        ]
+      },
+      {
+        headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` }
       }
+    );
 
-      if (matches.length > 0) {
-        results.push({
+    const text = response.data.choices[0].message.content;
+    const match = text.match(/\d+/);
+    const score = match ? parseInt(match[0]) : 0;
+    console.log("Similarity score:", score);
+    return score;
+  } catch (err) {
+    console.error("OpenAI Vision error:", err.message);
+    return 0;
+  }
+}
+
+// ===========================================
+// REVERSE IMAGE SEARCH VIA SERPER
+// ===========================================
+async function searchAliExpressImages(imageUrl, limit = 5) {
+  try {
+    const response = await axios.post(
+      "https://google.serper.dev/images",
+      { q: "site:aliexpress.com", image_url: imageUrl, num: limit },
+      { headers: { "X-API-KEY": process.env.SERPER_API_KEY } }
+    );
+
+    return (response.data?.images || []).slice(0, limit).map(item => ({
+      image: item.thumbnail || item.link,
+      link: item.link
+    }));
+  } catch (err) {
+    console.error("Serper search error:", err.message);
+    return [];
+  }
+}
+
+// ===========================================
+// ANALYZE ROUTE : ETSY → ALIEXPRESS
+// ===========================================
+app.post("/analyze-etsy", async (req, res) => {
+  const { etsyImages } = req.body; // un tableau d'URLs d'images Etsy
+  if (!etsyImages || !Array.isArray(etsyImages)) {
+    return res.status(400).json({ error: "etsyImages must be an array of URLs" });
+  }
+
+  const finalResults = [];
+
+  for (let i = 0; i < etsyImages.length; i++) {
+    const etsyImage = etsyImages[i];
+    console.log(`🔎 Searching AliExpress images for Etsy image ${i + 1}`);
+
+    const aliImages = await searchAliExpressImages(etsyImage, 5);
+
+    for (const ali of aliImages) {
+      const score = await checkSimilarity(etsyImage, ali.image);
+
+      // ✅ Condition modifiée : garder les images avec similarité ≥ 40%
+      if (score >= 40) {
+        finalResults.push({
           etsyImage,
-          etsyLink,
-          matches,
+          aliImage: ali.image,
+          aliLink: ali.link,
+          similarity: score
         });
       }
     }
-
-    res.json({ results });
-
-  } catch (err) {
-    console.error("Error:", err.message);
-    res.status(500).json({ error: "Pipeline failed", detail: err.message });
   }
+
+  res.json({ results: finalResults });
 });
 
-// ===============================
+// ===========================================
 // START SERVER
-// ===============================
+// ===========================================
 server.listen(process.env.PORT || 3000, () => {
   console.log("🚀 Server running");
 });
