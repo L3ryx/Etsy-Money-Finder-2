@@ -1,23 +1,16 @@
 {
   "name": "etsy-aliexpress-finder",
   "version": "1.0.0",
-  "description": "Find similar products on AliExpress for Etsy listings using OpenAI, Serper, and ImgBB.",
+  "description": "Find similar products from Etsy to AliExpress using OpenAI and reverse image search",
   "type": "module",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js"
   },
-  "keywords": [
-    "etsy",
-    "aliexpress",
-    "reverse-image-search",
-    "openai",
-    "imgbb",
-    "serper"
-  ],
-  "author": "TonNom",
-  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "dependencies": {
     "axios": "^1.6.6",
     "cheerio": "^1.0.0-rc.12",
@@ -30,7 +23,13 @@
   "devDependencies": {
     "nodemon": "^3.0.2"
   },
-  "engines": {
-    "node": ">=18.0.0"
-  }
+  "keywords": [
+    "etsy",
+    "aliexpress",
+    "reverse-image-search",
+    "openai",
+    "scraper"
+  ],
+  "author": "TonNom",
+  "license": "MIT"
 }
