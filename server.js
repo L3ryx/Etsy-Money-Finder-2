@@ -1,38 +1,27 @@
-require("dotenv").config();
-
-const express = require("express");
-const multer = require("multer");
-const axios = require("axios");
-const http = require("http");
-const { Server } = require("socket.io");
+import "dotenv/config";
+import express from "express";
+import multer from "multer";
+import axios from "axios";
+import http from "http";
+import { Server } from "socket.io";
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
-/* ===================================================== */
-/* MIDDLEWARE */
-/* ===================================================== */
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static("public"));
 
-/* ===================================================== */
-/* SOCKET LOG SYSTEM */
-/* ===================================================== */
-function sendLog(socket, message) {
-  console.log(message);
-  if (socket) {
-    socket.emit("log", { message, time: new Date().toISOString() });
-  }
-}
+// ================= SOCKET =================
+io.on("connection", (socket) => {
+  console.log("🟢 Client connected");
+  socket.emit("connected", { socketId: socket.id });
+});
 
-/* ===================================================== */
-/* 🔎 ETSY SEARCH (IMAGE + LINK STABLE EXTRACTION) */
-/* ===================================================== */
+// ================= ETSY SEARCH =================
 app.post("/search-etsy", async (req, res) => {
   const { keyword, limit } = req.body;
-
   if (!keyword) return res.status(400).json({ error: "Keyword required" });
 
   const maxItems = Math.min(parseInt(limit) || 10, 50);
@@ -40,7 +29,6 @@ app.post("/search-etsy", async (req, res) => {
   try {
     const etsyUrl = `https://www.etsy.com/search?q=${encodeURIComponent(keyword)}`;
 
-    // ScraperAPI pour récupérer HTML
     const scraperResponse = await axios.get("https://api.scraperapi.com/", {
       params: {
         api_key: process.env.SCRAPAPI_KEY,
@@ -51,7 +39,6 @@ app.post("/search-etsy", async (req, res) => {
 
     const html = scraperResponse.data;
 
-    // Extraction images + liens
     const imageRegex = /https:\/\/i\.etsystatic\.com[^"]+/g;
     const linkRegex = /https:\/\/www\.etsy\.com\/listing\/\d+/g;
 
@@ -59,7 +46,6 @@ app.post("/search-etsy", async (req, res) => {
     const links = [...html.matchAll(linkRegex)].map(m => m[0]);
 
     const results = [];
-
     for (let i = 0; i < Math.min(maxItems, images.length); i++) {
       results.push({ image: images[i], link: links[i] || etsyUrl });
     }
@@ -71,26 +57,17 @@ app.post("/search-etsy", async (req, res) => {
   }
 });
 
-/* ===================================================== */
-/* 🔄 REVERSE IMAGE GOOGLE → ALIEXPRESS (Serper API) */
-/* ===================================================== */
+// ================= REVERSE IMAGE → ALIEXPRESS =================
 app.post("/reverse-image-aliexpress", async (req, res) => {
   const { imageUrl } = req.body;
-
   if (!imageUrl) return res.status(400).json({ error: "imageUrl required" });
 
   try {
     const response = await axios.get("https://google.serper.dev/images", {
-      params: {
-        url: imageUrl,
-        filter: "aliexpress"
-      },
-      headers: {
-        "X-API-KEY": process.env.SERPER_API_KEY
-      }
+      params: { url: imageUrl, filter: "aliexpress" },
+      headers: { "X-API-KEY": process.env.SERPER_API_KEY }
     });
 
-    // Récupération des 5 premiers résultats
     const items = response.data.items?.slice(0, 5).map(item => ({
       link: item.link,
       image: item.thumbnail
@@ -103,16 +80,6 @@ app.post("/reverse-image-aliexpress", async (req, res) => {
   }
 });
 
-/* ===================================================== */
-/* SOCKET CONNECTION */
-/* ===================================================== */
-io.on("connection", (socket) => {
-  socket.emit("connected", { socketId: socket.id });
-  console.log("🟢 Client connected");
-});
-
-/* ===================================================== */
-/* SERVER START */
-/* ===================================================== */
+// ================= SERVER =================
 const PORT = process.env.PORT || 10000;
 server.listen(PORT, () => console.log("🚀 Server running on port", PORT));
