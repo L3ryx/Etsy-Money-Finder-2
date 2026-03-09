@@ -1,4 +1,5 @@
 require("dotenv").config();
+
 const express = require("express");
 const multer = require("multer");
 const axios = require("axios");
@@ -9,18 +10,24 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
+// Multer pour upload en mémoire
 const upload = multer({ storage: multer.memoryStorage() });
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static("public"));
 
-/* ================= SOCKET LOG ================= */
+// ====================
+// SOCKET LOG
+// ====================
 function sendLog(socket, message) {
   console.log(message);
   if (socket) socket.emit("log", { message, time: new Date().toISOString() });
 }
 
-/* ================= ETSY SEARCH ================= */
+// ====================
+// ETSY SEARCH
+// ====================
 app.post("/search-etsy", async (req, res) => {
   const { keyword, limit } = req.body;
   if (!keyword) return res.status(400).json({ error: "Keyword required" });
@@ -29,12 +36,17 @@ app.post("/search-etsy", async (req, res) => {
   try {
     const etsyUrl = `https://www.etsy.com/search?q=${encodeURIComponent(keyword)}`;
     const response = await axios.get("https://api.scraperapi.com/", {
-      params: { api_key: process.env.SCRAPAPI_KEY, url: etsyUrl, render: true }
+      params: {
+        api_key: process.env.SCRAPAPI_KEY,
+        url: etsyUrl,
+        render: true
+      }
     });
-    const html = response.data;
 
+    const html = response.data;
     const imageRegex = /https:\/\/i\.etsystatic\.com[^"]+/g;
     const linkRegex = /https:\/\/www\.etsy\.com\/listing\/\d+/g;
+
     const images = [...html.matchAll(imageRegex)].map(m => m[0]);
     const links = [...html.matchAll(linkRegex)].map(m => m[0]);
 
@@ -50,7 +62,9 @@ app.post("/search-etsy", async (req, res) => {
   }
 });
 
-/* ================= OPENAI SIMILARITY ================= */
+// ====================
+// OPENAI IMAGE SIMILARITY
+// ====================
 async function calculateSimilarity(imgA, imgB) {
   try {
     const response = await axios.post(
@@ -62,13 +76,18 @@ async function calculateSimilarity(imgA, imgB) {
             role: "user",
             content: [
               { type: "text", text: "Return similarity score between 0 and 100." },
-              { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imgA}` } },
-              { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imgB}` } }
+              { type: "image_url", image_url: { url: imgA } },
+              { type: "image_url", image_url: { url: imgB } }
             ]
           }
         ]
       },
-      { headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" } }
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          "Content-Type": "application/json"
+        }
+      }
     );
     const text = response.data.choices[0].message.content;
     const match = text.match(/\d+/);
@@ -79,18 +98,21 @@ async function calculateSimilarity(imgA, imgB) {
   }
 }
 
-/* ================= IMAGE ANALYSIS ================= */
+// ====================
+// IMAGE ANALYSIS
+// ====================
 app.post("/analyze-images", upload.array("images"), async (req, res) => {
   const socketId = req.body.socketId;
   const socket = io.sockets.sockets.get(socketId);
+
   const results = [];
 
   for (const file of req.files) {
-    sendLog(socket, `Processing ${file.originalname}`);
+    sendLog(socket, `Starting image analysis: ${file.originalname}`);
     const base64 = file.buffer.toString("base64");
-    let imageUrl;
 
-    // Upload to IMGBB
+    // 1️⃣ Upload sur IMGBB
+    let imageUrl;
     try {
       const uploadRes = await axios.post(
         "https://api.imgbb.com/1/upload",
@@ -103,34 +125,32 @@ app.post("/analyze-images", upload.array("images"), async (req, res) => {
       continue;
     }
 
-    // Search reverse image via Serper
+    // 2️⃣ Recherche inversée avec Serper
     let serperResults = [];
     try {
       const response = await axios.post(
         "https://google.serper.dev/images",
-        { imageUrl },
+        { image_url: imageUrl },
         { headers: { "X-API-KEY": process.env.SERPER_API_KEY } }
       );
       serperResults = response.data.images || [];
-      sendLog(socket, `${serperResults.length} results found`);
+      sendLog(socket, `Serper found ${serperResults.length} results`);
     } catch (err) {
-      sendLog(socket, "Serper failed");
+      sendLog(socket, "Serper search failed");
+      serperResults = [];
     }
 
+    // 3️⃣ Filtrer AliExpress + comparer avec OpenAI
     const topResults = serperResults.slice(0, 5);
     const matches = [];
-
     for (const item of topResults) {
-      if (!item.link?.includes("aliexpress.com")) continue;
+      if (!item.link?.includes("aliexpress")) continue;
+
       let similarity = 0;
       try {
-        const imgRes = await axios.get(item.thumbnail, { responseType: "arraybuffer" });
-        const base64B = Buffer.from(imgRes.data, "binary").toString("base64");
-        similarity = await calculateSimilarity(base64, base64B);
-      } catch (err) {
-        sendLog(socket, "Similarity check failed");
-      }
-      matches.push({ url: item.link, similarity, image: item.thumbnail });
+        similarity = await calculateSimilarity(imageUrl, item.imageUrl);
+      } catch {}
+      matches.push({ url: item.link, similarity, image: item.imageUrl });
       if (similarity >= 60) break;
     }
 
@@ -140,12 +160,16 @@ app.post("/analyze-images", upload.array("images"), async (req, res) => {
   res.json({ results });
 });
 
-/* ================= SOCKET.IO ================= */
+// ====================
+// SOCKET CONNECTION
+// ====================
 io.on("connection", socket => {
   socket.emit("connected", { socketId: socket.id });
-  console.log("🟢 Client connected");
+  console.log("Client connected:", socket.id);
 });
 
-/* ================= SERVER ================= */
+// ====================
+// SERVER
+// ====================
 const PORT = process.env.PORT || 10000;
-server.listen(PORT, () => console.log("🚀 Server running on port", PORT));
+server.listen(PORT, () => console.log("Server running on port", PORT));
