@@ -3,26 +3,30 @@ let socketId = null;
 
 socket.on("connected", data => {
   socketId = data.socketId;
-  addLog("Connected with socket: " + socketId);
+  log("✅ Connected to server");
 });
 
 socket.on("log", data => {
-  addLog(`[${data.time}] ${data.message}`);
+  log(data.message);
 });
 
-function addLog(msg) {
+function log(message) {
   const logs = document.getElementById("logs");
-  const p = document.createElement("p");
-  p.textContent = msg;
-  logs.appendChild(p);
+  const line = document.createElement("div");
+  line.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+  logs.appendChild(line);
   logs.scrollTop = logs.scrollHeight;
 }
 
 async function search() {
-  const keyword = document.getElementById("keyword").value;
-  const limit = document.getElementById("limit").value || 10;
+  const keyword = document.getElementById("keyword").value.trim();
+  const limit = document.getElementById("limit").value;
 
-  addLog("Starting Etsy search...");
+  if (!keyword) return alert("Please enter a keyword");
+
+  document.getElementById("results").innerHTML = "";
+  log(`🔎 Searching Etsy for "${keyword}"...`);
+
   try {
     const res = await fetch("/search-etsy", {
       method: "POST",
@@ -30,9 +34,19 @@ async function search() {
       body: JSON.stringify({ keyword, limit })
     });
     const data = await res.json();
+
+    if (!data.results || data.results.length === 0) {
+      log("⚠️ No Etsy results found");
+      return;
+    }
+
+    log(`✅ Found ${data.results.length} Etsy items`);
     displayEtsyResults(data.results);
+
+    // Automatically analyze the images
+    await analyzeImages(data.results);
   } catch (err) {
-    addLog("Etsy search failed");
+    log(`❌ Etsy search failed: ${err.message}`);
   }
 }
 
@@ -40,50 +54,66 @@ function displayEtsyResults(results) {
   const container = document.getElementById("results");
   container.innerHTML = "";
   results.forEach(item => {
-    const div = document.createElement("div");
-    div.className = "result-card";
-    div.innerHTML = `
+    const card = document.createElement("div");
+    card.className = "result-card";
+    card.innerHTML = `
       <div>
-        <img src="${item.image}" />
-        <p><a href="${item.link}" target="_blank">Etsy Link</a></p>
+        <img src="${item.image}" alt="Etsy image">
+        <div><a href="${item.link}" target="_blank">Etsy Link</a></div>
       </div>
-      <div>
-        <button onclick="analyzeImage('${item.image}')">Analyze</button>
-        <div class="ali-results" id="ali-${btoa(item.image)}"></div>
-      </div>
+      <div class="ali-results">Loading...</div>
     `;
-    container.appendChild(div);
+    container.appendChild(card);
   });
 }
 
-async function analyzeImage(imageUrl) {
-  addLog("Starting image analysis for " + imageUrl);
+async function analyzeImages(etsyItems) {
+  log("🧠 Starting image analysis pipeline...");
+
+  const formData = new FormData();
+  etsyItems.forEach((item, i) => {
+    formData.append("images", item.image); // pass image URL as file placeholder
+  });
+  formData.append("socketId", socketId);
+
+  // Because multer expects files, we need to fetch the image as blob
+  const tempFormData = new FormData();
+  for (const item of etsyItems) {
+    const res = await fetch(item.image);
+    const blob = await res.blob();
+    tempFormData.append("images", new File([blob], "image.jpg"));
+  }
+  tempFormData.append("socketId", socketId);
+
   try {
     const res = await fetch("/analyze-images", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ socketId, images: [imageUrl] })
+      body: tempFormData
     });
     const data = await res.json();
-    displayAliResults(data.results);
-  } catch {
-    addLog("Image analysis failed");
-  }
-}
 
-function displayAliResults(results) {
-  results.forEach(r => {
-    const div = document.getElementById("ali-" + btoa(r.image));
-    if (!div) return;
-    div.innerHTML = "";
-    r.matches.forEach(m => {
-      div.innerHTML += `
-        <div class="result-card">
-          <img src="${m.image}" />
-          <p><a href="${m.url}" target="_blank">AliExpress Link</a></p>
-          <p>Similarity: ${m.similarity}%</p>
-        </div>
-      `;
+    data.results.forEach((result, idx) => {
+      const card = document.getElementById("results").children[idx];
+      const aliDiv = card.querySelector(".ali-results");
+      aliDiv.innerHTML = "";
+
+      if (!result.matches || result.matches.length === 0) {
+        aliDiv.textContent = "No AliExpress match found";
+      } else {
+        result.matches.forEach(match => {
+          const matchDiv = document.createElement("div");
+          matchDiv.innerHTML = `
+            <img src="${match.image}" width="100" style="margin-right:10px">
+            <a href="${match.url}" target="_blank">AliExpress Link</a>
+            <span>(${match.similarity}%)</span>
+          `;
+          aliDiv.appendChild(matchDiv);
+        });
+      }
     });
-  });
+
+    log("✅ Image analysis finished");
+  } catch (err) {
+    log(`❌ Image analysis failed: ${err.message}`);
+  }
 }
