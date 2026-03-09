@@ -1,31 +1,25 @@
-// server.js
+require("dotenv").config();
+const express = require("express");
+const multer = require("multer");
+const axios = require("axios");
+const http = require("http");
+const { Server } = require("socket.io");
 
-// =====================================================
-// IMPORTS
-// =====================================================
-import "dotenv/config";  // équivalent de require('dotenv').config()
-import express from "express";
-import multer from "multer";
-import axios from "axios";
-import http from "http";
-import { Server } from "socket.io";
-
-// =====================================================
-// APP & SOCKET
-// =====================================================
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
+/* ===================================================== */
+/* MIDDLEWARE */
+/* ===================================================== */
 const upload = multer({ storage: multer.memoryStorage() });
-
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static("public"));
 
-// =====================================================
-// LOG FUNCTION
-// =====================================================
+/* ===================================================== */
+/* LOG SYSTEM */
+/* ===================================================== */
 function sendLog(socket, message, type = "info") {
   console.log(`[${type}] ${message}`);
   if (socket) {
@@ -33,25 +27,26 @@ function sendLog(socket, message, type = "info") {
   }
 }
 
-// =====================================================
-// ETSY SEARCH ROUTE
-// =====================================================
+/* ===================================================== */
+/* ETSY SEARCH ROUTE */
+/* ===================================================== */
 app.post("/search-etsy", async (req, res) => {
   const { keyword, limit } = req.body;
   if (!keyword) return res.status(400).json({ error: "Keyword required" });
-  const maxItems = Math.min(parseInt(limit) || 10, 50);
 
   try {
     const etsyUrl = `https://www.etsy.com/search?q=${encodeURIComponent(keyword)}`;
-    const scraperRes = await axios.get("https://api.scraperapi.com/", {
-      params: { api_key: process.env.SCRAPAPI_KEY, url: etsyUrl, render: true }
+    const scraperResponse = await axios.get("https://api.scraperapi.com/", {
+      params: { api_key: process.env.SCRAPAPI_KEY, url: etsyUrl, render: true },
     });
-    const html = scraperRes.data;
+    const html = scraperResponse.data;
 
     const imageRegex = /https:\/\/i\.etsystatic\.com[^"]+/g;
     const linkRegex = /https:\/\/www\.etsy\.com\/listing\/\d+/g;
+
     const images = [...html.matchAll(imageRegex)].map(m => m[0]);
     const links = [...html.matchAll(linkRegex)].map(m => m[0]);
+    const maxItems = Math.min(parseInt(limit) || 10, 50);
 
     const results = [];
     for (let i = 0; i < Math.min(maxItems, images.length); i++) {
@@ -65,9 +60,9 @@ app.post("/search-etsy", async (req, res) => {
   }
 });
 
-// =====================================================
-// FIND ALIEXPRESS WITH OPENAI SIMILARITY
-// =====================================================
+/* ===================================================== */
+/* FIND ALIEXPRESS ROUTE + SIMILARITY */
+/* ===================================================== */
 app.post("/find-aliexpress", async (req, res) => {
   const { etsyImage, socketId } = req.body;
   const socket = io.sockets.sockets.get(socketId);
@@ -75,61 +70,71 @@ app.post("/find-aliexpress", async (req, res) => {
   try {
     sendLog(socket, "🔎 Searching AliExpress images...");
 
-    // Ici tu dois mettre la logique pour récupérer les images AliExpress (ex: Serper API)
-    const aliexpressImages = []; // [{ url, imageUrl }]
+    // Search images via Serper (Google reverse image)
+    const serperRes = await axios.get("https://google.serper.dev/images", {
+      params: { engine: "google_reverse_image", image_url: etsyImage, X_API_KEY: process.env.SERPER_API_KEY },
+    });
 
-    const results = [];
+    const serperResults = serperRes.data?.image_results || [];
+    const topAliImages = serperResults.filter(r => r.link?.includes("aliexpress.com")).slice(0, 5);
 
-    for (const ali of aliexpressImages.slice(0, 5)) { // 5 premières images
+    const matches = [];
+
+    for (const ali of topAliImages) {
+      const aliImageUrl = ali.thumbnail || ali.image || ali.link;
+
+      // OpenAI Vision similarity check
       try {
         const vision = await axios.post(
           "https://api.openai.com/v1/chat/completions",
           {
             model: "gpt-4o-mini",
-            messages: [{
-              role: "user",
-              content: [
-                { type: "text", text: "Return similarity score between 0 and 100." },
-                { type: "image_url", image_url: { url: etsyImage } },
-                { type: "image_url", image_url: { url: ali.imageUrl } }
-              ]
-            }]
+            messages: [
+              {
+                role: "user",
+                content: [
+                  { type: "text", text: "Return similarity score between 0 and 100." },
+                  { type: "image_url", image_url: { url: etsyImage } },
+                  { type: "image_url", image_url: { url: aliImageUrl } },
+                ],
+              },
+            ],
           },
           { headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" } }
         );
 
         const text = vision.data.choices[0].message.content;
-        const match = text.match(/\d+/);
-        const similarity = match ? parseInt(match[0]) : 0;
+        const matchScore = text.match(/\d+/);
+        const similarity = matchScore ? parseInt(matchScore[0]) : 0;
 
-        if (similarity >= 70) { // filtre ≥70%
-          results.push({ aliImage: ali.imageUrl, aliLink: ali.url, similarity });
+        sendLog(socket, `Similarity with ${ali.link}: ${similarity}%`);
+
+        if (similarity >= 70) {
+          matches.push({ aliImage: aliImageUrl, aliLink: ali.link, similarity });
         }
-
       } catch (err) {
-        sendLog(socket, "OpenAI Vision failed for an image", "error");
+        sendLog(socket, `OpenAI Vision failed for image ${ali.link}`, "error");
       }
     }
 
-    res.json({ matches: results });
-
+    res.json({ matches });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error finding AliExpress matches" });
   }
 });
 
-// =====================================================
-// SOCKET CONNECTION
-// =====================================================
+/* ===================================================== */
+/* SOCKET CONNECTION */
+/* ===================================================== */
 io.on("connection", socket => {
   socket.emit("connected", { socketId: socket.id });
   console.log("🟢 Client connected");
 });
 
-// =====================================================
-// START SERVER
-// =====================================================
+/* ===================================================== */
+/* START SERVER */
+/* ===================================================== */
 server.listen(process.env.PORT || 3000, () => {
   console.log("🚀 Server running");
 });
