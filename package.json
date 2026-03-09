@@ -1,7 +1,7 @@
 {
-  "name": "image-reverse-search-ai",
+  "name": "etsy-ai-search",
   "version": "1.0.0",
-  "description": "AI reverse image search for AliExpress",
+  "description": "AI Image & Etsy search tool",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
