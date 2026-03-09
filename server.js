@@ -94,7 +94,7 @@ app.post("/reverse-image", async (req, res) => {
         num: maxItems,
       },
       {
-        headers: { "X-API-KEY": process.env.SERPER_API_KEY },
+        headers: { "X-API-KEY": process.env.X-API-KEY },
       }
     );
 
