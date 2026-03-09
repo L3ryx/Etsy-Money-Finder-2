@@ -10,9 +10,9 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
-/* ===================================================== */
-/* MIDDLEWARE */
-/* ===================================================== */
+/* =========================
+MIDDLEWARE
+========================= */
 
 const upload = multer({
   storage: multer.memoryStorage()
@@ -22,12 +22,11 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static("public"));
 
-/* ===================================================== */
-/* SOCKET LOG SYSTEM */
-/* ===================================================== */
+/* =========================
+LOG SYSTEM
+========================= */
 
 function sendLog(socket, message) {
-
   console.log(message);
 
   if (socket) {
@@ -38,9 +37,9 @@ function sendLog(socket, message) {
   }
 }
 
-/* ===================================================== */
-/* 🔎 ETSY SEARCH */
-/* ===================================================== */
+/* =========================
+ETSY SEARCH
+========================= */
 
 app.post("/search-etsy", async (req, res) => {
 
@@ -58,10 +57,10 @@ app.post("/search-etsy", async (req, res) => {
       `https://www.etsy.com/search?q=${encodeURIComponent(keyword)}`;
 
     const scraperResponse = await axios.get(
-      "https://api.scraperapi.com/",
+      "https://api.scraperapi.com",
       {
         params: {
-          api_key: process.env.SCRAPERAPI_KEY,
+          api_key: process.env.SCRAPAPI_KEY,
           url: etsyUrl,
           render: true
         }
@@ -91,7 +90,7 @@ app.post("/search-etsy", async (req, res) => {
 
   } catch (err) {
 
-    console.error("ScraperAPI Error:", err.message);
+    console.error("ScrapAPI Error:", err.message);
 
     res.status(500).json({
       error: "Scraping failed"
@@ -100,9 +99,9 @@ app.post("/search-etsy", async (req, res) => {
 
 });
 
-/* ===================================================== */
-/* 🧠 OPENAI IMAGE SIMILARITY */
-/* ===================================================== */
+/* =========================
+OPENAI IMAGE SIMILARITY
+========================= */
 
 async function calculateSimilarity(imgA, imgB) {
 
@@ -143,9 +142,9 @@ async function calculateSimilarity(imgA, imgB) {
   }
 }
 
-/* ===================================================== */
-/* 🧠 IMAGE ANALYSIS PIPELINE */
-/* ===================================================== */
+/* =========================
+IMAGE ANALYSIS
+========================= */
 
 app.post("/analyze-images", upload.array("images"), async (req, res) => {
 
@@ -160,9 +159,9 @@ app.post("/analyze-images", upload.array("images"), async (req, res) => {
 
     const base64 = file.buffer.toString("base64");
 
-    /* Upload to IMGBB */
-
     let imageUrl;
+
+    /* Upload IMGBB */
 
     try {
 
@@ -184,9 +183,9 @@ app.post("/analyze-images", upload.array("images"), async (req, res) => {
       continue;
     }
 
-    /* Search reverse image with Serper */
+    /* Reverse Image Search */
 
-    sendLog(socket, "🔎 Searching AliExpress");
+    sendLog(socket, "Searching AliExpress");
 
     let serperResults = [];
 
@@ -206,8 +205,6 @@ app.post("/analyze-images", upload.array("images"), async (req, res) => {
 
       serperResults = response.data.images || [];
 
-      sendLog(socket, `${serperResults.length} results found`);
-
     } catch (err) {
 
       sendLog(socket, "Serper failed");
@@ -225,13 +222,13 @@ app.post("/analyze-images", upload.array("images"), async (req, res) => {
 
       try {
 
-        const aliexpressImgRes = await axios.get(
+        const aliImg = await axios.get(
           item.imageUrl,
           { responseType: "arraybuffer" }
         );
 
         const base64B =
-          Buffer.from(aliexpressImgRes.data).toString("base64");
+          Buffer.from(aliImg.data).toString("base64");
 
         similarity =
           await calculateSimilarity(base64, base64B);
@@ -261,9 +258,9 @@ app.post("/analyze-images", upload.array("images"), async (req, res) => {
 
 });
 
-/* ===================================================== */
-/* SOCKET */
-/* ===================================================== */
+/* =========================
+SOCKET
+========================= */
 
 io.on("connection", (socket) => {
 
@@ -271,15 +268,16 @@ io.on("connection", (socket) => {
     socketId: socket.id
   });
 
-  console.log("🟢 Client connected");
+  console.log("Client connected");
+
 });
 
-/* ===================================================== */
-/* SERVER */
-/* ===================================================== */
+/* =========================
+SERVER
+========================= */
 
 const PORT = process.env.PORT || 10000;
 
 server.listen(PORT, () => {
-  console.log("🚀 Server running on port", PORT);
+  console.log("Server running on port", PORT);
 });
