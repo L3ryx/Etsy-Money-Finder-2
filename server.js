@@ -15,9 +15,9 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static("public"));
 
-// ==========================================
-// LOG SYSTEM
-// ==========================================
+/* =========================
+   LOG SYSTEM
+========================= */
 function sendLog(socket, message, type = "info") {
   console.log(`[${type}] ${message}`);
   if (socket) {
@@ -25,9 +25,9 @@ function sendLog(socket, message, type = "info") {
   }
 }
 
-// ==========================================
-// SIMILARITY FUNCTION (OpenAI)
-// ==========================================
+/* =========================
+   SIMILARITY FUNCTION
+========================= */
 async function calculateSimilarity(base64A, base64B) {
   try {
     const response = await axios.post(
@@ -47,125 +47,103 @@ async function calculateSimilarity(base64A, base64B) {
       },
       { headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` } }
     );
-
     const text = response.data.choices[0].message.content;
     const match = text.match(/0\.\d+|1(\.0+)?/);
     return match ? parseFloat(match[0]) : 0;
   } catch (err) {
-    console.error("OpenAI similarity error:", err.message);
+    console.error("Similarity error:", err.message);
     return 0;
   }
 }
 
-// ==========================================
-// ETSY SEARCH
-// ==========================================
+/* =========================
+   ETSY SEARCH
+========================= */
 app.post("/search-etsy", async (req, res) => {
   const { keyword, limit } = req.body;
-  if (!keyword) return res.status(400).json({ error: "Keyword required" });
   const maxItems = Math.min(parseInt(limit) || 10, 50);
-
   try {
     const etsyUrl = `https://www.etsy.com/search?q=${encodeURIComponent(keyword)}`;
-    const scraperResponse = await axios.get("https://api.scraperapi.com/", {
+    const scraperRes = await axios.get("https://api.scraperapi.com/", {
       params: { api_key: process.env.SCRAPAPI_KEY, url: etsyUrl, render: true }
     });
+    const html = scraperRes.data;
 
-    const html = scraperResponse.data;
     const imageRegex = /https:\/\/i\.etsystatic\.com[^"]+/g;
     const linkRegex = /https:\/\/www\.etsy\.com\/listing\/\d+/g;
 
     const images = [...html.matchAll(imageRegex)].map(m => m[0]);
     const links = [...html.matchAll(linkRegex)].map(m => m[0]);
 
-    const results = [];
-    for (let i = 0; i < Math.min(maxItems, images.length); i++) {
-      results.push({ image: images[i], link: links[i] || etsyUrl });
-    }
+    const results = images.slice(0, maxItems).map((img, i) => ({
+      etsyImage: img,
+      etsyLink: links[i] || etsyUrl
+    }));
 
     res.json({ results });
   } catch (err) {
-    console.error("ScraperAPI Error:", err.message);
-    res.status(500).json({ error: "Scraping failed" });
+    console.error("Etsy scraping error:", err.message);
+    res.status(500).json({ error: "Etsy scraping failed" });
   }
 });
 
-// ==========================================
-// ANALYZE IMAGES + FIND ALIEXPRESS
-// ==========================================
-app.post("/analyze-images", upload.array("images"), async (req, res) => {
-  const socketId = req.body.socketId;
+/* =========================
+   FIND ALIEXPRESS MATCHES AUTOMATICALLY
+========================= */
+app.post("/find-aliexpress", upload.none(), async (req, res) => {
+  const { etsyImage, socketId } = req.body;
   const socket = io.sockets.sockets.get(socketId);
-  const results = [];
+  sendLog(socket, "🔎 Processing Etsy image");
 
-  for (const file of req.files) {
-    sendLog(socket, `Processing ${file.originalname}`);
-    const base64Etsy = file.buffer.toString("base64");
-
-    // 1️⃣ Upload Etsy image to imgbb to get public URL
-    let publicImageUrl;
-    try {
-      const uploadRes = await axios.post(
-        "https://api.imgbb.com/1/upload",
-        new URLSearchParams({ key: process.env.IMGBB_KEY, image: base64Etsy })
-      );
-      publicImageUrl = uploadRes.data.data.url;
-      sendLog(socket, "Uploaded to IMGBB");
-    } catch (err) {
-      sendLog(socket, "IMGBB upload failed", "error");
-      continue;
-    }
-
-    // 2️⃣ Call Serper to get AliExpress images
-    sendLog(socket, "🔎 Calling Serper");
-    let serperResults = [];
-    try {
-      const response = await axios.get("https://google.serper.dev/images", {
-        params: { engine: "google_reverse_image", image_url: publicImageUrl },
-        headers: { "X-API-KEY": process.env.SERPER_API_KEY }
-      });
-      serperResults = response.data?.image_results || [];
-      sendLog(socket, `📦 ${serperResults.length} results found`);
-    } catch (err) {
-      sendLog(socket, `❌ Serper error | ${err.response?.status || err.message}`, "error");
-      serperResults = [];
-    }
-
-    // 3️⃣ Compare with top 5 AliExpress images
-    const aliexpressLinks = serperResults
+  try {
+    // 1. Call Serper for Google Reverse Image
+    const serperRes = await axios.get("https://google.serper.dev/images", {
+      params: { engine: "google_reverse_image", image_url: etsyImage },
+      headers: { "X-API-KEY": process.env.SERPER_API_KEY }
+    });
+    let aliexpressResults = serperRes.data.image_results
       .filter(r => r.link?.includes("aliexpress.com"))
-      .slice(0, 5);
+      .slice(0, 5); // 5 premières images
 
     const matches = [];
-    for (const item of aliexpressLinks) {
-      try {
-        const imageResponse = await axios.get(item.thumbnail || item.image, { responseType: "arraybuffer" });
-        const base64Ali = Buffer.from(imageResponse.data, "binary").toString("base64");
-        const similarity = await calculateSimilarity(base64Etsy, base64Ali);
-        if (similarity >= 0.6) {
-          matches.push({ image: item.thumbnail || item.image, link: item.link, similarity });
-        }
-      } catch (err) {
-        sendLog(socket, `Error comparing image: ${err.message}`, "error");
+
+    // 2. Compare similarity avec OpenAI
+    const etsyBase64Res = await axios.get(etsyImage, { responseType: "arraybuffer" });
+    const etsyBase64 = Buffer.from(etsyBase64Res.data, "binary").toString("base64");
+
+    for (const item of aliexpressResults) {
+      const aliexpressBase64Res = await axios.get(item.thumbnail, { responseType: "arraybuffer" });
+      const aliBase64 = Buffer.from(aliexpressBase64Res.data, "binary").toString("base64");
+
+      const similarity = await calculateSimilarity(etsyBase64, aliBase64);
+
+      if (similarity >= 0.7) {
+        matches.push({
+          aliImage: item.thumbnail,
+          aliLink: item.link,
+          similarity
+        });
       }
     }
 
-    results.push({ etsyImage: publicImageUrl, etsyLink: file.originalname, aliexpressMatches: matches });
+    res.json({ etsyImage, matches });
+  } catch (err) {
+    console.error("AliExpress matching error:", err.message);
+    res.status(500).json({ error: "AliExpress matching failed" });
   }
-
-  res.json({ results });
 });
 
-// ==========================================
-// SOCKET CONNECTION
-// ==========================================
-io.on("connection", (socket) => {
-  socket.emit("connected", { socketId: socket.id });
+/* =========================
+   SOCKET.IO
+========================= */
+io.on("connection", socket => {
   console.log("🟢 Client connected");
+  socket.emit("connected", { socketId: socket.id });
 });
 
-// ==========================================
-// START SERVER
-// ==========================================
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+/* =========================
+   START SERVER
+========================= */
+server.listen(process.env.PORT || 3000, () => {
+  console.log("🚀 Server running");
+});
