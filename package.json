@@ -1,9 +1,9 @@
 {
   "name": "etsy-aliexpress-finder",
   "version": "1.0.0",
-  "description": "Find AliExpress equivalents for Etsy listings with image similarity",
+  "description": "Find AliExpress equivalents for Etsy listings using image similarity",
   "main": "server.js",
-  "type": "module",
+  "type": "commonjs",
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js"
