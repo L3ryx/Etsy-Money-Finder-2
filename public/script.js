@@ -3,7 +3,7 @@ let socketId = null;
 
 socket.on("connected", data => {
   socketId = data.socketId;
-  log("🟢 Connected to server with socketId: " + socketId);
+  log("✅ Connected to server");
 });
 
 socket.on("log", data => {
@@ -11,22 +11,26 @@ socket.on("log", data => {
 });
 
 function log(message) {
-  const logsDiv = document.getElementById("logs");
-  logsDiv.innerHTML += `<div>${message}</div>`;
-  logsDiv.scrollTop = logsDiv.scrollHeight;
+  const logs = document.getElementById("logs");
+  logs.innerHTML += message + "<br>";
+  logs.scrollTop = logs.scrollHeight;
 }
 
 async function search() {
   const keyword = document.getElementById("keyword").value.trim();
-  const limit = document.getElementById("limit").value;
+  const limit = document.getElementById("limit").value || 10;
+  const resultsDiv = document.getElementById("results");
+  resultsDiv.innerHTML = "";
 
-  if (!keyword) return alert("Enter a keyword");
+  if (!keyword) {
+    alert("Please enter a keyword");
+    return;
+  }
 
-  document.getElementById("results").innerHTML = "";
-  log("🔍 Searching Etsy for keyword: " + keyword);
+  log(`🔎 Searching Etsy for "${keyword}"...`);
 
   try {
-    // 1️⃣ Search Etsy
+    // 1️⃣ Recherche Etsy
     const etsyRes = await fetch("/search-etsy", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -34,12 +38,14 @@ async function search() {
     });
     const etsyData = await etsyRes.json();
 
-    if (!etsyData.results || !etsyData.results.length) {
-      log("❌ No Etsy images found");
+    if (!etsyData.results || etsyData.results.length === 0) {
+      log("❌ No Etsy results found");
       return;
     }
 
-    // 2️⃣ Analyze Etsy images → get AliExpress matches
+    log(`✅ Found ${etsyData.results.length} Etsy items`);
+
+    // 2️⃣ Analyse et comparaison avec AliExpress
     const analyzeRes = await fetch("/analyze-etsy", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -48,37 +54,41 @@ async function search() {
 
     const analyzeData = await analyzeRes.json();
 
-    if (!analyzeData.results || !analyzeData.results.length) {
-      log("❌ No AliExpress matches with similarity ≥ 40%");
+    if (!analyzeData.results || analyzeData.results.length === 0) {
+      log("❌ No results with similarity ≥ 40%");
       return;
     }
 
-    log(`✅ Found ${analyzeData.results.length} matches`);
+    log(`✅ ${analyzeData.results.length} matching results found`);
 
-    // 3️⃣ Display results
-    const resultsDiv = document.getElementById("results");
-    analyzeData.results.forEach(item => {
+    // 3️⃣ Affichage
+    for (const item of analyzeData.results) {
       const div = document.createElement("div");
-      div.className = "result-card";
+      div.classList.add("result");
 
       div.innerHTML = `
-        <div>
-          <a href="${item.etsyLink}" target="_blank">
-            <img src="${item.etsyImage}" alt="Etsy">
-          </a>
-          <p>Etsy Link</p>
-        </div>
-        <div>
-          <a href="${item.aliLink}" target="_blank">
-            <img src="${item.aliImage}" alt="AliExpress">
-          </a>
-          <p>AliExpress Link | Similarity: ${item.similarity}%</p>
+        <h3>Etsy → AliExpress</h3>
+        <div style="display:flex;gap:20px;align-items:center;">
+          <div>
+            <a href="${item.etsyLink}" target="_blank">
+              <img src="${item.etsyImage}" />
+            </a>
+            <p>Etsy</p>
+          </div>
+          <div>
+            <a href="${item.aliLink}" target="_blank">
+              <img src="${item.aliImage}" />
+            </a>
+            <p>AliExpress - Similarity: ${item.similarity}%</p>
+          </div>
         </div>
       `;
+
       resultsDiv.appendChild(div);
-    });
+    }
 
   } catch (err) {
-    log("❌ Error occurred: " + err.message);
+    console.error(err);
+    log("❌ Error during search");
   }
 }
